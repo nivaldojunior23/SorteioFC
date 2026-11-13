@@ -4,22 +4,55 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createAppServer } from '../server.mjs';
+import { DEFAULT_SAMPLE_LIST } from '../lib/parser.mjs';
 
-test('HTTP API supports public anti-spoiler flow, admin import, PIN change token rotation, and reveal', async () => {
+test('HTTP API supports room creation (empty), public anti-spoiler flow, admin import, PIN change token rotation, and reveal', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tiratime-http-'));
   const dbPath = path.join(tmpDir, 'http.db');
-  const prevPin = process.env.ADMIN_PIN;
   const initialTestPin = '7391';
-  process.env.ADMIN_PIN = initialTestPin;
 
-  const { server } = createAppServer({ dbPath });
+  const { server, store } = createAppServer({ dbPath });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const addr = server.address();
   const baseUrl = `http://127.0.0.1:${addr.port}`;
 
   try {
+    // 0. No sample data: nothing is listed publicly and a fresh room starts empty
+    const listRes = await fetch(`${baseUrl}/api/matches`);
+    assert.deepEqual((await listRes.json()).matches, []);
+
+    const badCreate = await fetch(`${baseUrl}/api/matches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupName: 'Pelada', adminPin: '12' })
+    });
+    assert.equal(badCreate.status, 400);
+
+    const createRes = await fetch(`${baseUrl}/api/matches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupName: 'Pelada de Sexta', adminPin: initialTestPin })
+    });
+    assert.equal(createRes.status, 201);
+    const { match: created } = await createRes.json();
+    const slug = created.slug;
+    assert.match(slug, /^pelada-de-sexta-[a-z0-9]{4,5}$/);
+    assert.equal(created.players.length, 0, 'New room must start without players');
+    assert.equal(created.meta.dateLabel, '');
+    assert.equal(created.isAdmin, true);
+
+    // Organizer imports the real list
+    const importRes = await fetch(`${baseUrl}/api/matches/${slug}/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': created.adminToken },
+      body: JSON.stringify({ rawList: DEFAULT_SAMPLE_LIST })
+    });
+    assert.equal(importRes.status, 200);
+
+    const mine = await fetch(`${baseUrl}/api/matches?slugs=${slug},nao-existe`);
+    assert.equal((await mine.json()).matches.length, 1);
     // 1. Public fetch hides unrevealed teams and strips admin secrets
-    const res1 = await fetch(`${baseUrl}/api/matches/pelada-principal`);
+    const res1 = await fetch(`${baseUrl}/api/matches/${slug}`);
     assert.equal(res1.status, 200);
     assert.equal(res1.headers.get('referrer-policy'), 'no-referrer');
     assert.equal(res1.headers.get('x-content-type-options'), 'nosniff');
@@ -38,7 +71,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
 
     // 2. Player reveals their team
     const mateus = pub.players.find((p) => p.name === 'Mateus');
-    const revRes = await fetch(`${baseUrl}/api/matches/pelada-principal/players/${mateus.id}/reveal`, {
+    const revRes = await fetch(`${baseUrl}/api/matches/${slug}/players/${mateus.id}/reveal`, {
       method: 'POST'
     });
     assert.equal(revRes.status, 200);
@@ -47,7 +80,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     assert.equal(revData.player.revealed, true);
 
     // 3. Unauthorized admin mutation & URL query credentials rejected
-    const unauth = await fetch(`${baseUrl}/api/matches/pelada-principal/draw?pin=${initialTestPin}`, {
+    const unauth = await fetch(`${baseUrl}/api/matches/${slug}/draw?pin=${initialTestPin}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'open_live_urn' })
@@ -55,7 +88,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     assert.equal(unauth.status, 401);
 
     // 4. Auth via PIN works and switches to live urn
-    const authRes = await fetch(`${baseUrl}/api/matches/pelada-principal/auth`, {
+    const authRes = await fetch(`${baseUrl}/api/matches/${slug}/auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin: initialTestPin })
@@ -64,7 +97,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     const { adminToken } = await authRes.json();
     assert.ok(adminToken);
 
-    const urnRes = await fetch(`${baseUrl}/api/matches/pelada-principal/draw`, {
+    const urnRes = await fetch(`${baseUrl}/api/matches/${slug}/draw`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -81,7 +114,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     // 5. Player draws live from urn
     const eduardo = urnMatch.players.find((p) => p.name === 'Eduardo');
     const eduardoDraw = await fetch(
-      `${baseUrl}/api/matches/pelada-principal/players/${eduardo.id}/reveal`,
+      `${baseUrl}/api/matches/${slug}/players/${eduardo.id}/reveal`,
       { method: 'POST' }
     );
     assert.equal(eduardoDraw.status, 200);
@@ -90,7 +123,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     assert.equal(eduardoData.player.arrived, true);
 
     // 6. Admin can change PIN and rotates adminToken
-    const changePinRes = await fetch(`${baseUrl}/api/matches/pelada-principal/settings`, {
+    const changePinRes = await fetch(`${baseUrl}/api/matches/${slug}/settings`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -104,7 +137,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     assert.notEqual(updatedWithNewPin.adminToken, adminToken, 'Changing PIN must rotate adminToken');
 
     // Old token & old PIN rejected
-    const oldTokenTry = await fetch(`${baseUrl}/api/matches/pelada-principal/settings`, {
+    const oldTokenTry = await fetch(`${baseUrl}/api/matches/${slug}/settings`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -114,7 +147,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     });
     assert.equal(oldTokenTry.status, 401);
 
-    const oldAuth = await fetch(`${baseUrl}/api/matches/pelada-principal/auth`, {
+    const oldAuth = await fetch(`${baseUrl}/api/matches/${slug}/auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin: initialTestPin })
@@ -122,7 +155,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     assert.equal(oldAuth.status, 401);
 
     // New PIN accepted
-    const newAuth = await fetch(`${baseUrl}/api/matches/pelada-principal/auth`, {
+    const newAuth = await fetch(`${baseUrl}/api/matches/${slug}/auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin: '2026' })
@@ -132,7 +165,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     assert.ok(newAuthData.adminToken);
 
     // 7. Admin updates outfield capacity to 4 on the line
-    const setLineCapRes = await fetch(`${baseUrl}/api/matches/pelada-principal/settings`, {
+    const setLineCapRes = await fetch(`${baseUrl}/api/matches/${slug}/settings`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -145,7 +178,7 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
     assert.ok(matchWithCap4.teams.every((t) => t.outfieldCap === 4), 'All teams must have outfieldCap = 4');
 
     // 8. Full draw with cap 4 puts exactly 4 outfielders per team
-    const drawCap4Res = await fetch(`${baseUrl}/api/matches/pelada-principal/draw`, {
+    const drawCap4Res = await fetch(`${baseUrl}/api/matches/${slug}/draw`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -161,9 +194,8 @@ test('HTTP API supports public anti-spoiler flow, admin import, PIN change token
       assert.equal(outfields.length, 4, `Team ${team.name} must strictly have 4 outfielders`);
     }
   } finally {
-    if (prevPin === undefined) delete process.env.ADMIN_PIN;
-    else process.env.ADMIN_PIN = prevPin;
     await new Promise((resolve) => server.close(resolve));
+    store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
@@ -189,7 +221,15 @@ test('Vercel serverless handler (api/index.mjs) and VERCEL=1 mode work cleanly',
     const netJson = await net.json();
     assert.deepEqual(netJson.lanUrls, []);
 
-    const sse = await fetch(`http://127.0.0.1:${port}/api/matches/pelada-principal/events`);
+    const createRes = await fetch(`http://127.0.0.1:${port}/api/matches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupName: 'Racha Vercel', adminPin: '4321' })
+    });
+    const { match: created } = await createRes.json();
+    const slug = created.slug;
+
+    const sse = await fetch(`http://127.0.0.1:${port}/api/matches/${slug}/events`);
     assert.equal(sse.status, 200);
     const sseText = await sse.text();
     assert.ok(sseText.includes('"mode":"serverless"'));

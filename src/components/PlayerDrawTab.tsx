@@ -65,13 +65,26 @@ export function PlayerDrawTab({
     setRevealedResult({ team, teammates });
   }, [selectedPlayer, match.teams, match.players]);
 
-  // Cycle team vest preview during the 1.15s draw animation
+  // Cycle team vest preview with progressive deceleration during the 3s draw animation
   useEffect(() => {
     if (!isDrawing || match.teams.length === 0) return;
-    const timer = window.setInterval(() => {
+    let cancelled = false;
+    let timerId: number | undefined;
+    const startedAt = Date.now();
+
+    const step = () => {
+      if (cancelled) return;
       setCyclingIdx((prev) => (prev + 1) % match.teams.length);
-    }, 125);
-    return () => window.clearInterval(timer);
+      const elapsed = Date.now() - startedAt;
+      const delay = elapsed < 1000 ? 120 : elapsed < 1800 ? 185 : elapsed < 2450 ? 270 : 420;
+      timerId = window.setTimeout(step, delay);
+    };
+
+    timerId = window.setTimeout(step, 120);
+    return () => {
+      cancelled = true;
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
   }, [isDrawing, match.teams.length]);
 
   const filteredPlayers = useMemo(() => {
@@ -117,10 +130,10 @@ export function PlayerDrawTab({
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const spinDuration = prefersReducedMotion ? 220 : 1150;
+    const spinDuration = prefersReducedMotion ? 320 : 3000;
 
     setIsDrawing(true);
-    playDrawSpinCue(soundEnabled);
+    playDrawSpinCue(soundEnabled, prefersReducedMotion);
 
     try {
       const [res] = await Promise.all([
@@ -183,10 +196,11 @@ export function PlayerDrawTab({
 
             <button
               type="button"
+              disabled={isDrawing}
               onClick={() => {
                 if (!isDrawing) onSelectPlayer(null);
               }}
-              className="tappable hover-surface h-9 px-3 rounded-lg border border-[var(--chalk-line)] bg-[#071A12]/70 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ink-sage)]"
+              className="tappable hover-surface h-9 px-3 rounded-lg border border-[var(--chalk-line)] bg-[#071A12]/70 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ink-sage)] disabled:opacity-45 disabled:cursor-not-allowed"
             >
               <ArrowLeftRight className="w-3.5 h-3.5" />
               Trocar jogador
@@ -194,7 +208,7 @@ export function PlayerDrawTab({
           </div>
 
           {/* Draw Stage OR Revealed Team Card */}
-          {!selectedPlayer.revealed || !assignedTeam ? (
+          {isDrawing || !selectedPlayer.revealed || !assignedTeam ? (
             <div
               className="relative px-5 pt-6 pb-8 sm:pt-7 sm:pb-10 text-center overflow-hidden"
               style={{
@@ -241,7 +255,7 @@ export function PlayerDrawTab({
                       <div className="flex flex-col items-center gap-1.5">
                         <TiraTimeCrest className="w-16 h-16" />
                         <span className="text-xs font-semibold text-[var(--gold-trophy)]">
-                          Urna Ao Vivo
+                          Tirar time
                         </span>
                       </div>
                     )}
@@ -319,18 +333,24 @@ export function PlayerDrawTab({
               </div>
 
               <div className="mt-5 pt-4 border-t border-[var(--chalk-line)] flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-[var(--ink-sage)]">
-                  Pagamento:{' '}
-                  {selectedPlayer.paid ? (
-                    <span className="text-emerald-300 font-semibold">
-                      R$ {match.meta.feeAmount} pago
-                    </span>
-                  ) : (
-                    <span className="text-amber-200 font-semibold">
-                      R$ {match.meta.feeAmount} pendente com o organizador
-                    </span>
-                  )}
-                </div>
+                {match.meta.feeAmount > 0 ? (
+                  <div className="text-xs text-[var(--ink-sage)]">
+                    Pagamento:{' '}
+                    {selectedPlayer.paid ? (
+                      <span className="text-emerald-300 font-semibold">
+                        R$ {match.meta.feeAmount} pago
+                      </span>
+                    ) : (
+                      <span className="text-amber-200 font-semibold">
+                        R$ {match.meta.feeAmount} pendente com o organizador
+                      </span>
+                    )}
+                  </div>
+                ) : selectedPlayer.paid ? (
+                  <div className="text-xs text-emerald-300 font-semibold">Pagamento confirmado</div>
+                ) : (
+                  <div />
+                )}
 
                 <button
                   type="button"
@@ -483,60 +503,62 @@ export function PlayerDrawTab({
       </div>
 
       {/* Goalkeepers */}
-      <div>
-        <div className="flex items-center justify-between mb-2.5 px-1">
-          <h3 className="font-display text-xl font-bold uppercase text-[var(--ink-chalk)] flex items-center gap-2">
-            <Shield className="w-4 h-4 text-[var(--gold-trophy)]" />
-            Goleiros
-          </h3>
-          <span className="text-xs font-semibold text-[var(--ink-sage)] tabular-nums">
-            {goalkeepers.length} goleiros
-          </span>
-        </div>
+      {goalkeepers.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-2.5 px-1">
+            <h3 className="font-display text-xl font-bold uppercase text-[var(--ink-chalk)] flex items-center gap-2">
+              <Shield className="w-4 h-4 text-[var(--gold-trophy)]" />
+              Goleiros
+            </h3>
+            <span className="text-xs font-semibold text-[var(--ink-sage)] tabular-nums">
+              {goalkeepers.length} {goalkeepers.length === 1 ? 'goleiro' : 'goleiros'}
+            </span>
+          </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-          {goalkeepers.map((gk) => {
-            const team = gk.teamId ? teamById.get(gk.teamId) : undefined;
-            return (
-              <button
-                key={gk.id}
-                type="button"
-                onClick={() => onSelectPlayer(gk.id)}
-                className="tappable hover-lift text-left rounded-xl border border-amber-400/25 bg-[var(--bg-pitch)] hover-surface px-3.5 py-3 flex items-center justify-between gap-2.5 min-h-[58px]"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-400/35 flex items-center justify-center text-xs font-bold text-amber-200 tabular-nums shrink-0">
-                    {gk.listNumber ?? 'GL'}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-[var(--ink-chalk)] truncate">
-                      {gk.name}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            {goalkeepers.map((gk) => {
+              const team = gk.teamId ? teamById.get(gk.teamId) : undefined;
+              return (
+                <button
+                  key={gk.id}
+                  type="button"
+                  onClick={() => onSelectPlayer(gk.id)}
+                  className="tappable hover-lift text-left rounded-xl border border-amber-400/25 bg-[var(--bg-pitch)] hover-surface px-3.5 py-3 flex items-center justify-between gap-2.5 min-h-[58px]"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-400/35 flex items-center justify-center text-xs font-bold text-amber-200 tabular-nums shrink-0">
+                      {gk.listNumber ?? 'GL'}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-[var(--ink-chalk)] truncate">
+                        {gk.name}
+                      </div>
+                      <div className="text-xs text-[var(--ink-sage)]">Goleiro</div>
                     </div>
-                    <div className="text-xs text-[var(--ink-sage)]">Goleiro</div>
                   </div>
-                </div>
 
-                {gk.revealed && team ? (
-                  <span
-                    className="shrink-0 inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-bold border"
-                    style={{
-                      backgroundColor: team.color,
-                      color: team.textColor,
-                      borderColor: team.borderColor
-                    }}
-                  >
-                    {team.shortName}
-                  </span>
-                ) : (
-                  <span className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold bg-[var(--gold-trophy)]/15 text-[var(--gold-trophy)] border border-[var(--gold-trophy)]/35">
-                    Sortear
-                  </span>
-                )}
-              </button>
-            );
-          })}
+                  {gk.revealed && team ? (
+                    <span
+                      className="shrink-0 inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-bold border"
+                      style={{
+                        backgroundColor: team.color,
+                        color: team.textColor,
+                        borderColor: team.borderColor
+                      }}
+                    >
+                      {team.shortName}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold bg-[var(--gold-trophy)]/15 text-[var(--gold-trophy)] border border-[var(--gold-trophy)]/35">
+                      Sortear
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Open slots notice */}
       {match.openSlots.length > 0 && (

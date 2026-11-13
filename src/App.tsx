@@ -1,120 +1,152 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ClipboardList, Hourglass } from 'lucide-react';
 import { MatchHeader, type ActiveTab } from './components/MatchHeader';
 import { PlayerDrawTab } from './components/PlayerDrawTab';
 import { TeamsBoardTab } from './components/TeamsBoardTab';
 import { OrganizerTab } from './components/OrganizerTab';
-import { fetchMatch, fetchMatches, type AdminAuth } from './lib/api';
-import type { MatchState, MatchSummary } from './types';
+import { HomeScreen } from './components/HomeScreen';
+import { fetchMatch, type AdminAuth } from './lib/api';
+import { rememberMatch } from './lib/recent';
+import type { MatchState } from './types';
 
 function readUrlContext() {
-  if (typeof window === 'undefined') return { slug: 'pelada-principal', adminToken: '' };
+  if (typeof window === 'undefined') return { slug: null as string | null, adminToken: '' };
   const params = new URLSearchParams(window.location.search);
+  const slug = (params.get('pelada') || '').trim().toLowerCase();
   return {
-    slug: params.get('pelada') || 'pelada-principal',
+    slug: slug || null,
     adminToken: params.get('admin') || ''
   };
 }
 
+function readSavedAuth(slug: string | null): AdminAuth | undefined {
+  if (!slug || typeof window === 'undefined') return undefined;
+  const saved = window.localStorage.getItem(`tiratime:admin:${slug}`);
+  if (!saved) return undefined;
+  try {
+    const parsed = JSON.parse(saved) as AdminAuth;
+    return parsed?.token ? { token: parsed.token } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveAuth(slug: string, token: string) {
+  window.localStorage.setItem(`tiratime:admin:${slug}`, JSON.stringify({ token }));
+}
+
 export function App() {
   const initialCtx = readUrlContext();
-  const [slug, setSlug] = useState<string>(initialCtx.slug);
+  const [slug, setSlug] = useState<string | null>(initialCtx.slug);
   const [match, setMatch] = useState<MatchState | null>(null);
-  const [matches, setMatches] = useState<MatchSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(Boolean(initialCtx.slug));
+  const [homeError, setHomeError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>(
-    initialCtx.adminToken ? 'admin' : 'draw'
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialCtx.adminToken ? 'admin' : 'draw');
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(() =>
+    initialCtx.slug ? window.localStorage.getItem(`tiratime:player:${initialCtx.slug}`) : null
   );
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(`tiratime:player:${initialCtx.slug}`);
-  });
-  const [adminAuth, setAdminAuth] = useState<AdminAuth | undefined>(() => {
-    if (typeof window === 'undefined') return undefined;
-    if (initialCtx.adminToken) {
-      return { token: initialCtx.adminToken };
-    }
-    const saved = window.localStorage.getItem(`tiratime:admin:${initialCtx.slug}`);
-    if (!saved) return undefined;
-    try {
-      const parsed = JSON.parse(saved) as AdminAuth;
-      return parsed?.token ? { token: parsed.token } : undefined;
-    } catch {
-      return undefined;
-    }
-  });
+  const [adminAuth, setAdminAuth] = useState<AdminAuth | undefined>(() =>
+    initialCtx.adminToken ? { token: initialCtx.adminToken } : readSavedAuth(initialCtx.slug)
+  );
 
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [liveConnected, setLiveConnected] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 3200);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3600);
   }, []);
 
-  const loadData = useCallback(async (targetSlug: string, auth?: AdminAuth) => {
-    try {
-      const all = await fetchMatches();
-      let resolvedSlug = targetSlug;
-      let effectiveAuth = auth;
-      let m: MatchState;
-      try {
-        m = await fetchMatch(resolvedSlug, effectiveAuth);
-      } catch (err) {
-        if (all.length > 0 && !new URLSearchParams(window.location.search).get('pelada')) {
-          resolvedSlug = all[0].slug;
-          if (!effectiveAuth) {
-            const saved = window.localStorage.getItem(`tiratime:admin:${resolvedSlug}`);
-            if (saved) {
-              try {
-                const parsed = JSON.parse(saved) as AdminAuth;
-                if (parsed?.token) {
-                  effectiveAuth = { token: parsed.token };
-                  setAdminAuth(effectiveAuth);
-                }
-              } catch {
-                // ignore invalid saved auth
-              }
-            }
+  // ---- Navigation helpers -------------------------------------------------
+  const goHome = useCallback((error?: string) => {
+    setSlug(null);
+    setMatch(null);
+    setAdminAuth(undefined);
+    setSelectedPlayerId(null);
+    setLoading(false);
+    setHomeError(error ?? null);
+    window.history.pushState({}, '', window.location.pathname);
+  }, []);
+
+  const openRoom = useCallback(
+    (nextSlug: string, opts: { token?: string; tab?: ActiveTab; prefetched?: MatchState } = {}) => {
+      if (opts.token) saveAuth(nextSlug, opts.token);
+      const auth = opts.token ? { token: opts.token } : readSavedAuth(nextSlug);
+      setAdminAuth(auth);
+      setSelectedPlayerId(window.localStorage.getItem(`tiratime:player:${nextSlug}`));
+      setActiveTab(opts.tab ?? (auth ? 'admin' : 'draw'));
+      setHomeError(null);
+      if (opts.prefetched) {
+        setMatch(opts.prefetched);
+        setLoading(false);
+      } else {
+        setMatch(null);
+        setLoading(true);
+      }
+      setSlug(nextSlug);
+      const url = new URL(window.location.href);
+      url.search = '';
+      url.searchParams.set('pelada', nextSlug);
+      window.history.pushState({}, '', url.toString());
+    },
+    []
+  );
+
+  // Browser back/forward
+  useEffect(() => {
+    const onPop = () => {
+      const ctx = readUrlContext();
+      setSlug(ctx.slug);
+      setMatch(null);
+      setLoading(Boolean(ctx.slug));
+      setAdminAuth(readSavedAuth(ctx.slug));
+      setSelectedPlayerId(ctx.slug ? window.localStorage.getItem(`tiratime:player:${ctx.slug}`) : null);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // ---- Data loading -------------------------------------------------------
+  useEffect(() => {
+    if (!slug) return;
+    let cancelled = false;
+    fetchMatch(slug, adminAuth)
+      .then((m) => {
+        if (cancelled) return;
+        setMatch(m);
+        rememberMatch({ slug: m.slug, groupName: m.groupName, isOrganizer: m.isAdmin });
+        if (adminAuth?.token) {
+          if (m.isAdmin) {
+            saveAuth(m.slug, adminAuth.token);
+          } else {
+            // Token expired (PIN was changed) — drop it and ask for PIN again
+            window.localStorage.removeItem(`tiratime:admin:${m.slug}`);
+            setAdminAuth(undefined);
           }
-          setSlug(resolvedSlug);
-          m = await fetchMatch(resolvedSlug, effectiveAuth);
-        } else {
-          throw err;
+          const curUrl = new URL(window.location.href);
+          if (curUrl.searchParams.has('admin')) {
+            curUrl.searchParams.delete('admin');
+            window.history.replaceState({}, '', curUrl.toString());
+          }
         }
-      }
-      setMatch(m);
-      setMatches(all);
-      setError(null);
-      if (effectiveAuth?.token && m.isAdmin) {
-        window.localStorage.setItem(
-          `tiratime:admin:${resolvedSlug}`,
-          JSON.stringify({ token: effectiveAuth.token })
-        );
-        const curUrl = new URL(window.location.href);
-        if (curUrl.searchParams.has('admin')) {
-          curUrl.searchParams.delete('admin');
-          window.history.replaceState({}, '', curUrl.toString());
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao carregar pelada.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : '';
+        goHome(/não encontrad/i.test(msg) ? 'Essa pelada não existe mais ou o código está errado.' : msg || 'Erro ao abrir a pelada.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, adminAuth, goHome]);
 
+  // Real-time SSE updates + polling fallback (for serverless)
   useEffect(() => {
-    setLoading(true);
-    loadData(slug, adminAuth);
-  }, [slug, adminAuth, loadData]);
-
-  // Real-time SSE updates + serverless polling fallback (for Vercel)
-  useEffect(() => {
+    if (!slug) return;
     let closed = false;
     const syncLatest = () => {
       if (closed || document.visibilityState === 'hidden') return;
@@ -122,7 +154,6 @@ export function App() {
         .then((latest) => {
           if (!closed) {
             setMatch(latest);
-            setLiveConnected(true);
           }
         })
         .catch(() => {});
@@ -130,21 +161,16 @@ export function App() {
 
     const es = new EventSource(`/api/matches/${encodeURIComponent(slug)}/events`);
     es.addEventListener('connected', (ev) => {
-      setLiveConnected(true);
       try {
         const data = JSON.parse((ev as MessageEvent).data || '{}');
-        if (data.mode === 'serverless') {
-          es.close();
-        }
+        if (data.mode === 'serverless') es.close();
       } catch {
         // ignore parse errors
       }
     });
     es.addEventListener('match_updated', syncLatest);
     es.addEventListener('player_revealed', syncLatest);
-    es.onerror = () => {
-      es.close();
-    };
+    es.onerror = () => es.close();
 
     const pollInterval = window.setInterval(syncLatest, 4000);
     const handleVisibility = () => {
@@ -161,90 +187,66 @@ export function App() {
   }, [slug, adminAuth]);
 
   const handleSelectPlayer = (playerId: string | null) => {
+    if (!slug) return;
     setSelectedPlayerId(playerId);
-    if (playerId) {
-      window.localStorage.setItem(`tiratime:player:${slug}`, playerId);
-    } else {
-      window.localStorage.removeItem(`tiratime:player:${slug}`);
-    }
+    if (playerId) window.localStorage.setItem(`tiratime:player:${slug}`, playerId);
+    else window.localStorage.removeItem(`tiratime:player:${slug}`);
   };
 
   const handleShareLink = async () => {
     if (!match) return;
     const shareUrl = `${window.location.origin}/?pelada=${encodeURIComponent(match.slug)}`;
-    const shareText = `⚽ Sorteio ${match.groupName} (${match.meta.dateLabel} · ${match.meta.timeLabel})\nEntre no link e descubra seu time: ${shareUrl}`;
+    const when = [match.meta.dateLabel, match.meta.timeLabel].filter(Boolean).join(' · ');
+    const shareText = `${match.groupName}${when ? ` (${when})` : ''}\nEntre no link e descubra seu time: ${shareUrl}`;
 
     if (navigator.share) {
       try {
-        await navigator.share({
-          title: `${match.groupName} — Sorteio`,
-          text: shareText,
-          url: shareUrl
-        });
+        await navigator.share({ title: `${match.groupName} — TiraTime`, text: shareText, url: shareUrl });
         return;
       } catch {
         // fallback to clipboard
       }
     }
-
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      await navigator.clipboard.writeText(shareText);
       showToast('Link da pelada copiado! Mande no grupo do WhatsApp.');
     } catch {
       showToast('Copie o endereço do navegador para enviar no grupo.');
     }
   };
 
-  const handleSwitchMatch = (nextSlug: string) => {
-    const savedAuth = window.localStorage.getItem(`tiratime:admin:${nextSlug}`);
-    let nextAuth: AdminAuth | undefined;
-    if (savedAuth) {
-      try {
-        const parsed = JSON.parse(savedAuth) as AdminAuth;
-        if (parsed?.token) nextAuth = { token: parsed.token };
-      } catch {
-        nextAuth = undefined;
-      }
-    }
-    setAdminAuth(nextAuth);
-    setSelectedPlayerId(window.localStorage.getItem(`tiratime:player:${nextSlug}`));
-    setSlug(nextSlug);
-    const nextUrl = new URL(window.location.href);
-    nextUrl.searchParams.set('pelada', nextSlug);
-    nextUrl.searchParams.delete('admin');
-    window.history.replaceState({}, '', nextUrl.toString());
-  };
+  // ---- Render -------------------------------------------------------------
+  if (!slug) {
+    return (
+      <>
+        <HomeScreen
+          initialError={homeError}
+          onCreated={(created) => {
+            rememberMatch({ slug: created.slug, groupName: created.groupName, isOrganizer: true });
+            openRoom(created.slug, { token: created.adminToken, tab: 'admin', prefetched: created });
+            showToast(`Pelada criada! Código da sala: ${created.slug}`);
+          }}
+          onOpen={(nextSlug, groupName, token) => {
+            rememberMatch({ slug: nextSlug, groupName, isOrganizer: Boolean(token) });
+            openRoom(nextSlug, { token });
+            if (token) showToast('Painel do organizador desbloqueado.');
+          }}
+        />
+        {toast && <Toast message={toast} />}
+      </>
+    );
+  }
 
-  if (loading && !match) {
+  if (loading || !match) {
     return (
       <main className="min-h-[100dvh] flex flex-col items-center justify-center px-4 text-center">
         <div className="w-12 h-12 rounded-full border-2 border-[var(--gold-trophy)] border-t-transparent animate-spin" />
-        <p className="mt-4 text-sm font-medium text-[var(--ink-sage)]">
-          Carregando vestiário do TiraTime...
-        </p>
+        <p className="mt-4 text-sm font-medium text-[var(--ink-sage)]">Carregando vestiário do TiraTime...</p>
       </main>
     );
   }
 
-  if (error || !match) {
-    return (
-      <main className="min-h-[100dvh] flex flex-col items-center justify-center px-4 text-center">
-        <div className="max-w-md rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-6">
-          <h1 className="font-display text-2xl font-bold uppercase text-[var(--ink-chalk)]">
-            Não foi possível abrir a pelada
-          </h1>
-          <p className="mt-2 text-sm text-[var(--ink-sage)]">{error || 'Pelada não encontrada.'}</p>
-          <button
-            type="button"
-            onClick={() => handleSwitchMatch(matches[0]?.slug || 'pelada-principal')}
-            className="tappable hover-gold mt-4 h-10 px-4 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm"
-          >
-            Voltar para Pelada Principal
-          </button>
-        </div>
-      </main>
-    );
-  }
+  const isEmptyRoster = match.players.length === 0;
 
   return (
     <div className="min-h-[100dvh] flex flex-col pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
@@ -255,60 +257,93 @@ export function App() {
         soundEnabled={soundEnabled}
         onToggleSound={() => setSoundEnabled((v) => !v)}
         onShareLink={handleShareLink}
-        liveConnected={liveConnected}
+        onGoHome={() => goHome()}
       />
 
       <main className="flex-1">
-        {activeTab === 'draw' && (
-          <PlayerDrawTab
-            match={match}
-            selectedPlayerId={selectedPlayerId}
-            onSelectPlayer={handleSelectPlayer}
-            onMatchUpdated={setMatch}
-            onGoToTeams={() => setActiveTab('teams')}
-            soundEnabled={soundEnabled}
-          />
-        )}
+        {activeTab !== 'admin' && isEmptyRoster ? (
+          <EmptyRosterNotice isAdmin={match.isAdmin} onGoToAdmin={() => setActiveTab('admin')} />
+        ) : (
+          <>
+            {activeTab === 'draw' && (
+              <PlayerDrawTab
+                match={match}
+                selectedPlayerId={selectedPlayerId}
+                onSelectPlayer={handleSelectPlayer}
+                onMatchUpdated={setMatch}
+                onGoToTeams={() => setActiveTab('teams')}
+                soundEnabled={soundEnabled}
+              />
+            )}
 
-        {activeTab === 'teams' && (
-          <TeamsBoardTab match={match} adminAuth={adminAuth} onToast={showToast} />
+            {activeTab === 'teams' && <TeamsBoardTab match={match} adminAuth={adminAuth} onToast={showToast} />}
+          </>
         )}
 
         {activeTab === 'admin' && (
           <OrganizerTab
             match={match}
-            matches={matches}
             adminAuth={adminAuth}
             onAuthenticated={(token, _pin, nextMatch) => {
-              const authPayload: AdminAuth = { token };
-              window.localStorage.setItem(
-                `tiratime:admin:${nextMatch.slug}`,
-                JSON.stringify(authPayload)
-              );
-              setAdminAuth(authPayload);
+              saveAuth(nextMatch.slug, token);
+              rememberMatch({ slug: nextMatch.slug, groupName: nextMatch.groupName, isOrganizer: true });
+              setAdminAuth({ token });
               setMatch(nextMatch);
-              setSlug(nextMatch.slug);
-              fetchMatches().then(setMatches).catch(() => {});
             }}
             onMatchUpdated={(nextMatch) => {
               setMatch(nextMatch);
-              fetchMatches().then(setMatches).catch(() => {});
+              rememberMatch({ slug: nextMatch.slug, groupName: nextMatch.groupName });
             }}
-            onSwitchMatch={handleSwitchMatch}
+            onGoHome={() => goHome()}
             onToast={showToast}
           />
         )}
       </main>
 
-      {toast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="toast-slide fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 max-w-[92vw] rounded-xl border border-[var(--gold-trophy)]/40 bg-[#0A251A]/95 backdrop-blur-md px-4 py-2.5 text-sm font-semibold text-[var(--ink-chalk)] shadow-2xl"
-        >
-          {toast}
-        </div>
-      )}
+      {toast && <Toast message={toast} />}
     </div>
+  );
+}
+
+function Toast({ message }: { message: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="toast-slide fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 max-w-[92vw] rounded-xl border border-[var(--gold-trophy)]/40 bg-[#0A251A]/95 backdrop-blur-md px-4 py-2.5 text-sm font-semibold text-[var(--ink-chalk)] shadow-2xl"
+    >
+      {message}
+    </div>
+  );
+}
+
+function EmptyRosterNotice({ isAdmin, onGoToAdmin }: { isAdmin: boolean; onGoToAdmin: () => void }) {
+  return (
+    <section className="max-w-md mx-auto px-4 py-10">
+      <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-6 text-center">
+        <div className="mx-auto w-12 h-12 rounded-xl bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/35 flex items-center justify-center text-[var(--gold-trophy)]">
+          {isAdmin ? <ClipboardList className="w-6 h-6" /> : <Hourglass className="w-6 h-6" />}
+        </div>
+        <h2 className="mt-4 font-display text-2xl font-bold uppercase text-[var(--ink-chalk)]">
+          A lista ainda está vazia
+        </h2>
+        <p className="mt-1.5 text-sm text-[var(--ink-sage)]">
+          {isAdmin
+            ? 'Cole a lista do WhatsApp ou adicione os jogadores no painel do organizador para liberar o sorteio.'
+            : 'O organizador ainda não montou a lista desta pelada. Volte daqui a pouco!'}
+        </p>
+        <button
+          type="button"
+          onClick={onGoToAdmin}
+          className={
+            isAdmin
+              ? 'tappable hover-gold mt-5 h-11 px-5 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm'
+              : 'tappable hover-surface mt-5 h-10 px-4 rounded-xl border border-[var(--chalk-line)] bg-[#071A12] text-xs font-semibold text-[var(--gold-trophy)]'
+          }
+        >
+          {isAdmin ? 'Montar a lista agora' : 'Sou o organizador · Montar lista'}
+        </button>
+      </div>
+    </section>
   );
 }

@@ -115,19 +115,26 @@ test('live urn guarantees balanced teams as players arrive one by one', () => {
   }
 });
 
-test('PeladaStore defaults to live_urn mode, draws from urn, generates safe PIN, and masks closed_reveal spoilers', () => {
+test('PeladaStore starts empty, creates rooms with PIN, draws from urn, and masks closed_reveal spoilers', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tiratime-test-'));
   const dbPath = path.join(tmpDir, 'test.db');
-  const prevPin = process.env.ADMIN_PIN;
-  delete process.env.ADMIN_PIN;
+  let store;
 
   try {
-    const store = new PeladaStore(dbPath);
-    assert.ok(store.generatedInitialPin, 'Should generate a random initial PIN when ADMIN_PIN env is unset');
-    assert.match(store.generatedInitialPin, /^\d{6}$/);
+    store = new PeladaStore(dbPath);
+    assert.equal(store.listMatchesBySlugs(['pelada-principal']).length, 0, 'No sample match must be seeded');
+    assert.throws(() => store.createMatch({ groupName: 'X', adminPin: '1234' }), /nome da pelada/);
+    assert.throws(() => store.createMatch({ groupName: 'Pelada de Sexta', adminPin: '12' }), /PIN/);
 
-    const initialPin = store.generatedInitialPin;
-    const publicBefore = store.getMatchForClient('pelada-principal');
+    const initialPin = '8642';
+    const empty = store.createMatch({ groupName: 'Pelada de Sexta', adminPin: initialPin, timeLabel: '21:00', feeAmount: '15' });
+    assert.equal(empty.players.length, 0);
+    assert.equal(empty.meta.timeLabel, '21:00');
+    assert.equal(empty.meta.feeAmount, 15);
+    const slug = empty.slug;
+
+    store.importRawList(slug, DEFAULT_SAMPLE_LIST);
+    const publicBefore = store.getMatchForClient(slug);
     assert.equal(publicBefore.isAdmin, false);
     assert.equal(publicBefore.adminPin, undefined);
     assert.equal(publicBefore.adminToken, undefined);
@@ -138,24 +145,24 @@ test('PeladaStore defaults to live_urn mode, draws from urn, generates safe PIN,
     );
 
     const lucas = publicBefore.players.find((p) => p.name === 'Lucas');
-    const reveal = store.revealPlayerTeam('pelada-principal', lucas.id);
+    const reveal = store.revealPlayerTeam(slug, lucas.id);
     assert.ok(reveal.team);
     assert.equal(reveal.player.revealed, true);
     assert.equal(reveal.player.teamId, reveal.team.id);
 
-    const publicAfter = store.getMatchForClient('pelada-principal');
+    const publicAfter = store.getMatchForClient(slug);
     const lucasAfter = publicAfter.players.find((p) => p.id === lucas.id);
     assert.equal(lucasAfter.teamId, reveal.team.id);
 
     // Switch to closed_reveal and verify Admin sees pre-drawn teams while Public is masked
-    store.updateSettings('pelada-principal', { drawMode: 'closed_reveal' });
-    const publicClosed = store.getMatchForClient('pelada-principal');
+    store.updateSettings(slug, { drawMode: 'closed_reveal' });
+    const publicClosed = store.getMatchForClient(slug);
     assert.ok(
       publicClosed.players.every((p) => p.teamId === null),
       'Unrevealed teamId must be masked in closed_reveal'
     );
 
-    const adminView = store.getMatchForClient('pelada-principal', { adminPin: initialPin });
+    const adminView = store.getMatchForClient(slug, { adminPin: initialPin });
     assert.equal(adminView.isAdmin, true);
     assert.ok(
       adminView.players.some((p) => p.teamId !== null),
@@ -166,8 +173,56 @@ test('PeladaStore defaults to live_urn mode, draws from urn, generates safe PIN,
     assert.match(whatsappText, /PELADA DE SEXTA/);
     assert.match(whatsappText, /Lucas/);
   } finally {
-    if (prevPin === undefined) delete process.env.ADMIN_PIN;
-    else process.env.ADMIN_PIN = prevPin;
+    store?.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('parser does not invent date/time/fee when the list does not have them', () => {
+  const parsed = parseWhatsAppList('1- Ana\n2- Bia');
+  assert.equal(parsed.players.length, 2);
+  assert.equal(parsed.meta.dateLabel, '');
+  assert.equal(parsed.meta.timeLabel, '');
+  assert.equal(parsed.meta.feeAmount, 0);
+});
+
+test('room metadata can be updated and is preserved when importing a plain list without headers', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tiratime-meta-'));
+  const dbPath = path.join(tmpDir, 'meta.db');
+  let store;
+
+  try {
+    store = new PeladaStore(dbPath);
+    const created = store.createMatch({
+      groupName: 'Racha da Firma',
+      adminPin: '9988',
+      dateLabel: 'Quinta',
+      timeLabel: '20:30',
+      feeAmount: 20
+    });
+    assert.equal(created.meta.feeLabel, 'R$ 20');
+
+    const updated = store.updateSettings(created.slug, {
+      groupName: 'Racha dos Amigos',
+      dateLabel: 'Terça',
+      timeLabel: '21:00',
+      feeAmount: 0
+    });
+    assert.equal(updated.groupName, 'Racha dos Amigos');
+    assert.equal(updated.meta.dateLabel, 'Terça');
+    assert.equal(updated.meta.timeLabel, '21:00');
+    assert.equal(updated.meta.feeAmount, 0);
+    assert.equal(updated.meta.feeLabel, '');
+
+    assert.throws(() => store.updateSettings(created.slug, { groupName: 'A' }), /pelo menos 2 letras/);
+
+    const imported = store.importRawList(created.slug, '1- João\n2- Pedro\nGoleiros:\n3- Lucas');
+    assert.equal(imported.players.length, 3);
+    assert.equal(imported.meta.dateLabel, 'Terça');
+    assert.equal(imported.meta.timeLabel, '21:00');
+    assert.equal(imported.meta.feeAmount, 0);
+  } finally {
+    store?.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });

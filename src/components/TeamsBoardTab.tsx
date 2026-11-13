@@ -1,4 +1,4 @@
-import { Check, Copy, Eye, EyeOff, Lock, Shield, Users } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, Lock, RefreshCw, Shield, Users } from 'lucide-react';
 import { useState } from 'react';
 import { fetchWhatsAppExport } from '../lib/api';
 import type { MatchState } from '../types';
@@ -252,7 +252,10 @@ export function TeamsBoardTab({ match, adminAuth, onToast }: TeamsBoardTabProps)
           {unassignedConfirmed.length > 0 && (
             <div>
               <h4 className="font-display text-lg font-bold uppercase text-[var(--gold-trophy)] flex items-center gap-2">
-                <span>🔄 Próximos da Fila / Suplentes</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <RefreshCw className="w-4 h-4 shrink-0" />
+                  Próximos da Fila / Suplentes
+                </span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--gold-trophy)]/20 text-[var(--gold-trophy)] border border-[var(--gold-trophy)]/30">
                   {unassignedConfirmed.length}
                 </span>
@@ -267,7 +270,7 @@ export function TeamsBoardTab({ match, adminAuth, onToast }: TeamsBoardTabProps)
                       #{p.listNumber ?? '•'} {p.name}
                     </span>
                     <span className="text-xs text-[var(--ink-muted)] shrink-0">
-                      {p.role === 'gk' ? '🧤 Goleiro' : '🏃 Linha'}
+                      {p.role === 'gk' ? 'Goleiro' : 'Linha'}
                     </span>
                   </li>
                 ))}

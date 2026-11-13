@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
   Banknote,
+  Calendar,
   Check,
+  ClipboardList,
   Copy,
   Eye,
   EyeOff,
+  Hash,
   KeyRound,
   Link2,
+  Pencil,
   Plus,
   RefreshCw,
   Shield,
@@ -18,9 +23,7 @@ import {
 } from 'lucide-react';
 import {
   addPlayer,
-  createMatch,
   executeDraw,
-  fetchTemplateList,
   importMatchList,
   previewWhatsAppParse,
   updateMatchSettings,
@@ -28,8 +31,10 @@ import {
   verifyAdminAuth,
   type AdminAuth
 } from '../lib/api';
-import type { MatchState, MatchSummary, ParsePreviewResult, PlayerStatus, TeamConfig } from '../types';
+import type { MatchState, ParsePreviewResult, PlayerStatus, TeamConfig } from '../types';
 import { VestBadge, FORMATION_LAYOUTS, getInitials } from './TiraTimeCrest';
+
+const MIN_PIN = 4;
 
 const COLOR_PRESETS: Array<Pick<TeamConfig, 'shortName' | 'color' | 'textColor' | 'borderColor'>> = [
   { shortName: 'Ouro', color: '#EAB308', textColor: '#0A1E15', borderColor: '#FDE047' },
@@ -72,15 +77,17 @@ function TacticalFormationPreview({
               Prancheta Tática:
             </span>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/40 text-[var(--gold-trophy)] font-bold">
-              <span>🧤 1 no Gol (Goleiro)</span>
+              <Shield className="w-3.5 h-3.5 shrink-0" />
+              <span>1 no Gol (Goleiro)</span>
             </div>
             <span className="text-base font-bold text-[var(--ink-sage)]">+</span>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-[var(--ink-chalk)] font-bold">
-              <span>🏃 {outfieldCap} na Linha (Jogadores de Campo)</span>
+              <span>{outfieldCap} na Linha (Jogadores de Campo)</span>
             </div>
             <span className="text-base font-bold text-[var(--ink-sage)]">=</span>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 font-extrabold">
-              <span>👥 {outfieldCap + 1} Atletas por Equipe</span>
+              <Users className="w-3.5 h-3.5 shrink-0" />
+              <span>{outfieldCap + 1} Atletas por Equipe</span>
             </div>
           </div>
 
@@ -93,22 +100,29 @@ function TacticalFormationPreview({
         </div>
 
         {/* Comparison with Current WhatsApp Roster */}
-        <div className="flex items-center gap-2 pt-1 border-t border-[rgba(245,242,232,0.08)] text-[11px] sm:text-xs">
+        <div className="flex items-center flex-wrap gap-2 pt-1 border-t border-[rgba(245,242,232,0.08)] text-[11px] sm:text-xs">
           <span className="text-[var(--ink-sage)]">
             Elenco ativo na lista:{' '}
             <strong className="text-[var(--ink-chalk)]">{eligibleCount} confirmados</strong>.
           </span>
-          {diffSlots === 0 ? (
-            <span className="text-emerald-300 font-semibold">
-              ✅ A lista preenche perfeitamente as {totalSlots} vagas dos times!
+          {players.length === 0 ? (
+            <span className="text-[var(--ink-muted)] font-medium">
+              Adicione jogadores na lista abaixo para preencher as {totalSlots} vagas.
+            </span>
+          ) : diffSlots === 0 ? (
+            <span className="inline-flex items-center gap-1.5 text-emerald-300 font-semibold">
+              <Check className="w-3.5 h-3.5 shrink-0" />
+              <span>A lista preenche perfeitamente as {totalSlots} vagas dos times.</span>
             </span>
           ) : diffSlots > 0 ? (
-            <span className="text-amber-300 font-semibold">
-              ⚠️ Faltam {diffSlots} atletas para fechar as {totalSlots} vagas ({eligibleCount}/{totalSlots}).
+            <span className="inline-flex items-center gap-1.5 text-amber-300 font-semibold">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>Faltam {diffSlots} atletas para fechar as {totalSlots} vagas ({eligibleCount}/{totalSlots}).</span>
             </span>
           ) : (
-            <span className="text-sky-300 font-semibold">
-              ℹ️ Há {Math.abs(diffSlots)} atleta(s) excedentes na lista de espera.
+            <span className="inline-flex items-center gap-1.5 text-sky-300 font-semibold">
+              <Users className="w-3.5 h-3.5 shrink-0" />
+              <span>Há {Math.abs(diffSlots)} atleta(s) excedentes na lista de espera.</span>
             </span>
           )}
         </div>
@@ -286,8 +300,10 @@ function TacticalFormationPreview({
 
               {/* Bottom summary */}
               <div className="flex items-center justify-between text-[11px] text-[var(--ink-muted)] pt-1 border-t border-[var(--chalk-line)]">
-                <span>🧤 1 no Gol</span>
-                <span>🏃 {outfieldCap} na Linha</span>
+                <span className="inline-flex items-center gap-1">
+                  <Shield className="w-3 h-3" />1 no Gol
+                </span>
+                <span>{outfieldCap} na Linha</span>
                 <span className="font-bold text-[var(--ink-chalk)]">Total: {outfieldCap + 1} atletas</span>
               </div>
             </div>
@@ -300,24 +316,23 @@ function TacticalFormationPreview({
 
 interface OrganizerTabProps {
   match: MatchState;
-  matches: MatchSummary[];
   adminAuth?: AdminAuth;
   onAuthenticated: (token: string, pin: string, nextMatch: MatchState) => void;
   onMatchUpdated: (nextMatch: MatchState) => void;
-  onSwitchMatch: (slug: string) => void;
+  onGoHome: () => void;
   onToast: (message: string) => void;
 }
 
 export function OrganizerTab({
   match,
-  matches,
   adminAuth,
   onAuthenticated,
   onMatchUpdated,
-  onSwitchMatch,
+  onGoHome,
   onToast
 }: OrganizerTabProps) {
   const [pinInput, setPinInput] = useState('');
+  const [showLoginPin, setShowLoginPin] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
@@ -330,6 +345,15 @@ export function OrganizerTab({
   const [newPinValue, setNewPinValue] = useState('');
   const [pinFeedback, setPinFeedback] = useState<string | null>(null);
   const [showCurrentPin, setShowCurrentPin] = useState(false);
+
+  // Room metadata editor state
+  const [isEditingInfo, setIsEditingInfo] = useState(false);
+  const [editGroupName, setEditGroupName] = useState(match.groupName);
+  const [editDateLabel, setEditDateLabel] = useState(match.meta.dateLabel);
+  const [editTimeLabel, setEditTimeLabel] = useState(match.meta.timeLabel);
+  const [editFeeAmount, setEditFeeAmount] = useState(
+    match.meta.feeAmount > 0 ? String(match.meta.feeAmount) : ''
+  );
 
   // Safety confirmation dialog for draw actions
   const [pendingConfirmAction, setPendingConfirmAction] = useState<{
@@ -348,14 +372,16 @@ export function OrganizerTab({
   );
   const [newGuest, setNewGuest] = useState(false);
 
-  // Create new match drawer state
-  const [showNewMatch, setShowNewMatch] = useState(false);
-  const [newMatchGroup, setNewMatchGroup] = useState('Pelada de Sexta');
-  const [newMatchPin, setNewMatchPin] = useState('');
-
   useEffect(() => {
     setRawText(match.rawList);
   }, [match.id, match.rawList]);
+
+  useEffect(() => {
+    setEditGroupName(match.groupName);
+    setEditDateLabel(match.meta.dateLabel);
+    setEditTimeLabel(match.meta.timeLabel);
+    setEditFeeAmount(match.meta.feeAmount > 0 ? String(match.meta.feeAmount) : '');
+  }, [match.id, match.groupName, match.meta.dateLabel, match.meta.timeLabel, match.meta.feeAmount]);
 
   useEffect(() => {
     if (match.openSlots[0]) {
@@ -481,8 +507,8 @@ export function OrganizerTab({
   const handleSaveNewPin = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanPin = newPinValue.trim();
-    if (!cleanPin || cleanPin.length < 3) {
-      setPinFeedback('O PIN precisa ter pelo menos 3 caracteres.');
+    if (!cleanPin || cleanPin.length < MIN_PIN) {
+      setPinFeedback(`O PIN precisa ter pelo menos ${MIN_PIN} caracteres.`);
       return;
     }
     setPinFeedback(null);
@@ -562,15 +588,20 @@ export function OrganizerTab({
     return (
       <section className="max-w-md mx-auto px-4 py-8">
         <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-6">
-          <div className="w-12 h-12 rounded-xl bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/35 flex items-center justify-center text-[var(--gold-trophy)]">
-            <KeyRound className="w-6 h-6" />
+          <div className="flex items-center justify-between gap-2">
+            <div className="w-12 h-12 rounded-xl bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/35 flex items-center justify-center text-[var(--gold-trophy)]">
+              <KeyRound className="w-6 h-6" />
+            </div>
+            <span className="rounded-lg bg-[#071A12] border border-[var(--chalk-line)] px-2.5 py-1 font-mono text-xs text-[var(--ink-sage)]">
+              {match.slug}
+            </span>
           </div>
 
           <h2 className="mt-4 font-display text-2xl font-bold uppercase text-[var(--ink-chalk)]">
-            Área do Organizador
+            Área do Organizador · {match.groupName}
           </h2>
           <p className="mt-1.5 text-sm text-[var(--ink-sage)] leading-relaxed">
-            Digite o PIN do organizador para importar a lista do WhatsApp, sortear os times, confirmar dúvidas e marcar quem pagou.
+            Digite o PIN definido na criação da sala para configurar os times, importar a lista e controlar os pagamentos.
           </p>
 
           <form onSubmit={handlePinSubmit} className="mt-5 space-y-3">
@@ -578,16 +609,26 @@ export function OrganizerTab({
               <label htmlFor="admin-pin-input" className="block text-xs font-semibold text-[var(--ink-sage)] mb-1.5">
                 PIN do organizador
               </label>
-              <input
-                id="admin-pin-input"
-                type="password"
-                inputMode="numeric"
-                autoComplete="off"
-                value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                placeholder="Digite o PIN de acesso"
-                className="w-full h-11 px-3.5 rounded-xl bg-[#071A12] border border-[var(--chalk-line)] text-base text-[var(--ink-chalk)] tabular-nums focus:border-[var(--gold-trophy)] outline-none"
-              />
+              <div className="relative">
+                <input
+                  id="admin-pin-input"
+                  type={showLoginPin ? 'text' : 'password'}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value)}
+                  placeholder="Digite o PIN da sala"
+                  className="w-full h-11 pl-3.5 pr-11 rounded-xl bg-[#071A12] border border-[var(--chalk-line)] text-base text-[var(--ink-chalk)] tabular-nums focus:border-[var(--gold-trophy)] outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPin((v) => !v)}
+                  aria-label={showLoginPin ? 'Ocultar PIN' : 'Mostrar PIN'}
+                  className="absolute right-1.5 top-1.5 w-8 h-8 rounded-lg flex items-center justify-center text-[var(--ink-muted)] hover:text-[var(--ink-chalk)]"
+                >
+                  {showLoginPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             {authError && (
@@ -604,6 +645,15 @@ export function OrganizerTab({
               {authLoading ? 'Verificando...' : 'Entrar como Organizador'}
             </button>
           </form>
+
+          <button
+            type="button"
+            onClick={onGoHome}
+            className="tappable hover-surface mt-3 w-full h-10 rounded-xl border border-[var(--chalk-line)] bg-[#071A12] text-xs font-semibold text-[var(--ink-sage)] inline-flex items-center justify-center gap-1.5"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Voltar para Minhas Peladas
+          </button>
         </div>
       </section>
     );
@@ -622,14 +672,40 @@ export function OrganizerTab({
     }
   };
 
-  const handleLoadExample = async () => {
-    try {
-      const tpl = await fetchTemplateList();
-      setRawText(tpl);
-      onToast('Lista de exemplo carregada no campo.');
-    } catch {
-      onToast('Erro ao carregar lista exemplo.');
+  const scrollToElement = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => el.focus({ preventScroll: true }), 260);
+  };
+
+  const handleSaveMatchInfo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (editGroupName.trim().length < 2) {
+      onToast('O nome da pelada precisa ter pelo menos 2 letras.');
+      return;
     }
+    const numericFee = Number(editFeeAmount.replace(',', '.').replace(/[^\d.]/g, ''));
+    const cleanFee = editFeeAmount.trim() && Number.isFinite(numericFee) && numericFee > 0 ? numericFee : 0;
+    await runAction(
+      'save-info',
+      async () => {
+        const updated = await updateMatchSettings(
+          match.slug,
+          {
+            groupName: editGroupName.trim(),
+            dateLabel: editDateLabel.trim(),
+            timeLabel: editTimeLabel.trim(),
+            feeAmount: cleanFee,
+            feeLabel: cleanFee > 0 ? `R$ ${cleanFee}` : ''
+          },
+          effectiveAuth
+        );
+        setIsEditingInfo(false);
+        return updated;
+      },
+      'Informações da pelada atualizadas!'
+    );
   };
 
   const handleAddPlayer = async (e: React.FormEvent) => {
@@ -656,33 +732,6 @@ export function OrganizerTab({
     setNewGuest(false);
   };
 
-  const handleCreateNewMatch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanPin = newMatchPin.trim();
-    if (cleanPin.length < 3) {
-      onToast('Defina um PIN do organizador com pelo menos 3 caracteres.');
-      return;
-    }
-    setBusyAction('create-match');
-    try {
-      const created = await createMatch({
-        groupName: newMatchGroup.trim() || 'Pelada de Sexta',
-        rawList: rawText,
-        teamCount: match.teams.length,
-        drawMode: match.drawMode,
-        adminPin: cleanPin
-      });
-      setShowNewMatch(false);
-      setNewMatchPin('');
-      onAuthenticated(created.adminToken || '', cleanPin, created);
-      onToast(`Nova pelada "${created.meta.dateLabel}" criada!`);
-    } catch (err) {
-      onToast(err instanceof Error ? err.message : 'Erro ao criar nova pelada.');
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
   const handleTeamUpdate = (index: number, patch: Partial<TeamConfig>) => {
     const nextTeams = match.teams.map((t, i) => (i === index ? { ...t, ...patch } : t));
     runAction('team-update', () => updateMatchSettings(match.slug, { teams: nextTeams }, effectiveAuth));
@@ -690,79 +739,46 @@ export function OrganizerTab({
 
   return (
     <section className="max-w-5xl mx-auto px-4 py-5 space-y-6">
-      {/* 1. Share & Multi-Pelada Bar */}
+      {/* 1. Room Info, Share & PIN */}
       <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-4 sm:p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-2xl font-bold uppercase text-[var(--ink-chalk)]">
-              Painel do Capitão
+              Painel do Organizador · {match.groupName}
             </h2>
             <p className="text-sm text-[var(--ink-sage)]">
-              Mande o link dos jogadores no grupo do WhatsApp para cada um descobrir seu time.
+              {match.players.length === 0
+                ? 'Sala pronta! Adicione a lista de jogadores abaixo e compartilhe o código ou o link com a galera.'
+                : 'Mande o link dos jogadores no grupo do WhatsApp para cada um descobrir seu time.'}
             </p>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            {matches.length > 1 && (
-              <select
-                aria-label="Selecionar pelada"
-                value={match.slug}
-                onChange={(e) => onSwitchMatch(e.target.value)}
-                className="h-9 px-3 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-base sm:text-sm font-medium text-[var(--ink-chalk)]"
-              >
-                {matches.map((m) => (
-                  <option key={m.slug} value={m.slug}>
-                    {m.groupName} — {m.dateLabel}
-                  </option>
-                ))}
-              </select>
-            )}
-            <button
-              type="button"
-              onClick={() => setShowNewMatch((v) => !v)}
-              className="tappable hover-surface h-9 px-3 rounded-lg border border-[var(--chalk-line)] bg-[#071A12] text-xs font-semibold text-[var(--ink-chalk)] inline-flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
-              Nova Pelada
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onGoHome}
+            className="tappable hover-surface self-start sm:self-auto h-9 px-3 rounded-lg border border-[var(--chalk-line)] bg-[#071A12] text-xs font-semibold text-[var(--ink-chalk)] inline-flex items-center gap-1.5 shrink-0"
+          >
+            <ArrowLeft className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
+            Minhas Peladas / Nova Sala
+          </button>
         </div>
 
-        {showNewMatch && (
-          <form
-            onSubmit={handleCreateNewMatch}
-            className="border-t border-[var(--chalk-line)] pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end"
+        {/* Room Code Bar */}
+        <div className="rounded-xl border border-[var(--chalk-line)] bg-[#071A12] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Hash className="w-4 h-4 text-[var(--gold-trophy)] shrink-0" />
+            <span className="text-xs text-[var(--ink-sage)]">Código da sala:</span>
+            <code className="font-mono text-sm font-bold text-[var(--gold-trophy)] truncate">{match.slug}</code>
+          </div>
+          <button
+            type="button"
+            onClick={() => copyText(match.slug, 'Código da sala')}
+            className="tappable hover-surface h-8 px-2.5 rounded-lg border border-[var(--chalk-line)] bg-[#0D281D] text-xs font-semibold text-[var(--ink-chalk)] inline-flex items-center gap-1.5"
           >
-            <div>
-              <label className="block text-xs text-[var(--ink-sage)] mb-1">Nome do grupo</label>
-              <input
-                type="text"
-                value={newMatchGroup}
-                onChange={(e) => setNewMatchGroup(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-base"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-[var(--ink-sage)] mb-1">PIN do organizador</label>
-              <input
-                type="password"
-                inputMode="numeric"
-                autoComplete="off"
-                value={newMatchPin}
-                onChange={(e) => setNewMatchPin(e.target.value)}
-                placeholder="Crie um PIN (mín. 3 dígitos)"
-                className="w-full h-10 px-3 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-base tabular-nums"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={busyAction === 'create-match' || newMatchPin.trim().length < 3}
-              className="tappable hover-gold h-10 px-4 rounded-lg bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm disabled:bg-[#103022] disabled:text-[var(--ink-sage)] disabled:border disabled:border-[var(--chalk-line)] disabled:cursor-not-allowed"
-            >
-              Criar Pelada com a Lista
-            </button>
-          </form>
-        )}
+            <Copy className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
+            Copiar código
+          </button>
+        </div>
 
         <div className="border-t border-[var(--chalk-line)] pt-3 grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[var(--chalk-line)]">
           <button
@@ -798,6 +814,105 @@ export function OrganizerTab({
             </div>
             <Copy className="w-4 h-4 text-[var(--ink-sage)] shrink-0" />
           </button>
+        </div>
+
+        {/* Match Info Editor (Name, Date, Time, Fee) */}
+        <div className="border-t border-[var(--chalk-line)] pt-3.5 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#071A12] p-3 rounded-xl border border-[var(--chalk-line)]">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/30 flex items-center justify-center text-[var(--gold-trophy)] shrink-0">
+                <Calendar className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-[var(--ink-chalk)] truncate">{match.groupName}</div>
+                <div className="text-[11px] text-[var(--ink-muted)] mt-0.5 truncate">
+                  {[match.meta.dateLabel, match.meta.timeLabel, match.meta.feeLabel].filter(Boolean).join(' · ') ||
+                    'Sem dia, horário ou valor definidos ainda'}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsEditingInfo((v) => !v)}
+              className="tappable hover-surface self-start sm:self-auto h-8 px-3 rounded-lg border border-[var(--chalk-line)] bg-[#0D281D] text-xs font-semibold text-[var(--ink-chalk)] inline-flex items-center gap-1.5 shrink-0"
+            >
+              <Pencil className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
+              <span>{isEditingInfo ? 'Cancelar' : 'Editar Dados da Pelada'}</span>
+            </button>
+          </div>
+
+          {isEditingInfo && (
+            <form
+              onSubmit={handleSaveMatchInfo}
+              className="rounded-xl border border-[var(--gold-trophy)]/40 bg-[#092419] p-3.5 sm:p-4 space-y-3"
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-semibold text-[var(--ink-sage)] mb-1">
+                    Nome da pelada
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={60}
+                    value={editGroupName}
+                    onChange={(e) => setEditGroupName(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-sm text-[var(--ink-chalk)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-[var(--ink-sage)] mb-1">Dia / Data</label>
+                  <input
+                    type="text"
+                    maxLength={40}
+                    value={editDateLabel}
+                    onChange={(e) => setEditDateLabel(e.target.value)}
+                    placeholder="Ex: Quinta-feira"
+                    className="w-full h-9 px-3 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-sm text-[var(--ink-chalk)]"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[var(--ink-sage)] mb-1">Horário</label>
+                    <input
+                      type="text"
+                      maxLength={20}
+                      value={editTimeLabel}
+                      onChange={(e) => setEditTimeLabel(e.target.value)}
+                      placeholder="21:00"
+                      className="w-full h-9 px-2.5 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-sm text-[var(--ink-chalk)] tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[var(--ink-sage)] mb-1">Valor (R$)</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={editFeeAmount}
+                      onChange={(e) => setEditFeeAmount(e.target.value)}
+                      placeholder="10"
+                      className="w-full h-9 px-2.5 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-sm text-[var(--ink-chalk)] tabular-nums"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={busyAction !== null || editGroupName.trim().length < 2}
+                  className="tappable hover-gold h-9 px-4 rounded-lg bg-[var(--gold-trophy)] text-[#071A12] font-bold text-xs disabled:opacity-50"
+                >
+                  {busyAction === 'save-info' ? 'Salvando...' : 'Salvar Dados'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingInfo(false)}
+                  className="tappable hover-surface h-9 px-3 rounded-lg border border-[var(--chalk-line)] text-xs text-[var(--ink-muted)]"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
         {/* Organizer PIN Management Bar */}
@@ -854,7 +969,7 @@ export function OrganizerTab({
                   Definir Novo PIN do Organizador
                 </h4>
                 <p className="text-xs text-[var(--ink-sage)] mt-0.5">
-                  Defina um novo PIN próprio para sua pelada (mínimo 3 caracteres).
+                  Defina um novo PIN próprio para sua pelada (mínimo {MIN_PIN} caracteres).
                 </p>
               </div>
 
@@ -871,7 +986,7 @@ export function OrganizerTab({
 
                 <button
                   type="submit"
-                  disabled={busyAction !== null || newPinValue.trim().length < 3}
+                  disabled={busyAction !== null || newPinValue.trim().length < MIN_PIN}
                   className="tappable hover-gold h-9 px-4 rounded-lg bg-[var(--gold-trophy)] text-[#071A12] font-bold text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {busyAction === 'save-pin' ? 'Salvando...' : 'Salvar Novo PIN'}
@@ -899,6 +1014,43 @@ export function OrganizerTab({
           )}
         </div>
       </div>
+
+      {/* Empty Roster Onboarding Callout */}
+      {match.players.length === 0 && (
+        <div className="rounded-2xl border border-[var(--gold-trophy)]/45 bg-[var(--gold-trophy)]/10 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="w-10 h-10 rounded-xl bg-[var(--gold-trophy)]/20 border border-[var(--gold-trophy)]/40 flex items-center justify-center text-[var(--gold-trophy)] shrink-0">
+              <ClipboardList className="w-5 h-5" />
+            </span>
+            <div>
+              <h3 className="font-display text-xl font-bold uppercase text-[var(--ink-chalk)]">
+                Sua sala começou limpa! Adicione a lista
+              </h3>
+              <p className="text-xs sm:text-sm text-[var(--ink-sage)] mt-0.5">
+                Nenhum dado aleatório foi gerado. Cole a lista do WhatsApp ou cadastre os jogadores manualmente abaixo.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => scrollToElement('whatsapp-list-input')}
+              className="tappable hover-gold h-9 px-3.5 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-xs inline-flex items-center gap-1.5"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Colar Lista do WhatsApp
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToElement('quick-add-name')}
+              className="tappable hover-surface h-9 px-3.5 rounded-xl border border-[var(--chalk-line-strong)] bg-[#071A12] text-[var(--ink-chalk)] font-semibold text-xs inline-flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
+              Adicionar Manual
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 2. Draw Configuration & Actions */}
       <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-4 sm:p-5 space-y-5">
@@ -1255,7 +1407,7 @@ export function OrganizerTab({
 
                     <button
                       type="button"
-                      disabled={busyAction !== null}
+                      disabled={busyAction !== null || eligiblePlayers.length === 0}
                       onClick={() =>
                         handleTriggerDrawAction(
                           'open_live_urn',
@@ -1265,7 +1417,7 @@ export function OrganizerTab({
                           'Urna Ao Vivo zerada e pronta para o pessoal sortear na chegada.'
                         )
                       }
-                      className="tappable hover-gold w-full h-11 px-4 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm inline-flex items-center justify-center gap-2"
+                      className="tappable hover-gold w-full h-11 px-4 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm inline-flex items-center justify-center gap-2 disabled:opacity-45 disabled:cursor-not-allowed"
                     >
                       <RefreshCw className="w-4 h-4 text-[#071A12]" />
                       <span>Zerar e Abrir Urna Ao Vivo</span>
@@ -1285,7 +1437,7 @@ export function OrganizerTab({
 
                     <button
                       type="button"
-                      disabled={busyAction !== null}
+                      disabled={busyAction !== null || eligiblePlayers.length === 0}
                       onClick={() =>
                         handleTriggerDrawAction(
                           'run_full_draw',
@@ -1295,7 +1447,7 @@ export function OrganizerTab({
                           'Todas as vagas foram preenchidas automaticamente pelo sorteio!'
                         )
                       }
-                      className="tappable hover-surface w-full h-11 px-4 rounded-xl border border-[var(--chalk-line-strong)] bg-[#0D281D] text-[var(--ink-chalk)] font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2"
+                      className="tappable hover-surface w-full h-11 px-4 rounded-xl border border-[var(--chalk-line-strong)] bg-[#0D281D] text-[var(--ink-chalk)] font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 disabled:opacity-45 disabled:cursor-not-allowed"
                     >
                       <Shuffle className="w-4 h-4 text-[var(--gold-trophy)]" />
                       <span>Preencher Vagas Automaticamente</span>
@@ -1317,7 +1469,7 @@ export function OrganizerTab({
 
                     <button
                       type="button"
-                      disabled={busyAction !== null}
+                      disabled={busyAction !== null || eligiblePlayers.length === 0}
                       onClick={() =>
                         handleTriggerDrawAction(
                           'run_full_draw',
@@ -1327,7 +1479,7 @@ export function OrganizerTab({
                           'Novo sorteio realizado! As bolinhas foram embaralhadas em segredo.'
                         )
                       }
-                      className="tappable hover-gold w-full h-11 px-4 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm inline-flex items-center justify-center gap-2"
+                      className="tappable hover-gold w-full h-11 px-4 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm inline-flex items-center justify-center gap-2 disabled:opacity-45 disabled:cursor-not-allowed"
                     >
                       <Shuffle className="w-4 h-4 text-[#071A12]" />
                       <span>Embaralhar & Sortear Times em Segredo</span>
@@ -1347,7 +1499,7 @@ export function OrganizerTab({
 
                     <button
                       type="button"
-                      disabled={busyAction !== null}
+                      disabled={busyAction !== null || eligiblePlayers.length === 0}
                       onClick={() =>
                         handleTriggerDrawAction(
                           'open_live_urn',
@@ -1357,7 +1509,7 @@ export function OrganizerTab({
                           'Modo Urna Ao Vivo ativado! A galera pode tirar as bolinhas na chegada.'
                         )
                       }
-                      className="tappable hover-surface w-full h-11 px-4 rounded-xl border border-[var(--chalk-line-strong)] bg-[#0D281D] text-[var(--ink-chalk)] font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2"
+                      className="tappable hover-surface w-full h-11 px-4 rounded-xl border border-[var(--chalk-line-strong)] bg-[#0D281D] text-[var(--ink-chalk)] font-semibold text-xs sm:text-sm inline-flex items-center justify-center gap-2 disabled:opacity-45 disabled:cursor-not-allowed"
                     >
                       <RefreshCw className="w-4 h-4 text-[var(--gold-trophy)]" />
                       <span>Mudar para Urna Ao Vivo</span>
@@ -1433,29 +1585,21 @@ export function OrganizerTab({
 
       {/* 3. WhatsApp List Importer */}
       <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-4 sm:p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h3 className="font-display text-2xl font-bold uppercase text-[var(--ink-chalk)]">
-              Importar Lista do WhatsApp
-            </h3>
-            <p className="text-sm text-[var(--ink-sage)]">
-              Cole a mensagem do grupo exatamente como vem no WhatsApp. O sistema entende goleiros, convidados, dúvidas, números repetidos e vagas vazias.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleLoadExample}
-            className="tappable hover-surface h-9 px-3 rounded-lg border border-[var(--chalk-line)] bg-[#071A12] text-xs font-semibold text-[var(--gold-trophy)] shrink-0 self-start"
-          >
-            Carregar lista de exemplo
-          </button>
+        <div>
+          <h3 className="font-display text-2xl font-bold uppercase text-[var(--ink-chalk)]">
+            Importar Lista do WhatsApp
+          </h3>
+          <p className="text-sm text-[var(--ink-sage)]">
+            Cole a mensagem do grupo exatamente como vem no WhatsApp. O sistema entende goleiros, convidados, dúvidas, números repetidos e vagas vazias.
+          </p>
         </div>
 
         <textarea
+          id="whatsapp-list-input"
           rows={9}
           value={rawText}
           onChange={(e) => setRawText(e.target.value)}
-          placeholder="Cole aqui a LISTA FUT ⚽ do WhatsApp..."
+          placeholder={`Cole aqui a lista do WhatsApp, ex:\nDATA: Quinta-feira\nHORÁRIO: 21:00\nVALOR: R$ 15\n1- Nome\n2- Nome (convidado)\nGoleiros:\n3- Nome`}
           className="w-full rounded-xl bg-[#071A12] border border-[var(--chalk-line)] p-3.5 text-base leading-relaxed text-[var(--ink-chalk)] focus:border-[var(--gold-trophy)] outline-none"
         />
 
@@ -1474,9 +1618,11 @@ export function OrganizerTab({
               <span className="rounded-md bg-[#071A12] px-2.5 py-1 text-[var(--ink-sage)]">
                 {preview.summary.openSlotCount} vaga(s) em aberto
               </span>
-              <span className="text-[var(--ink-sage)]">
-                {preview.meta.dateLabel} · {preview.meta.timeLabel} · {preview.meta.feeLabel}
-              </span>
+              {(preview.meta.dateLabel || preview.meta.timeLabel || preview.meta.feeLabel) && (
+                <span className="text-[var(--ink-sage)]">
+                  {[preview.meta.dateLabel, preview.meta.timeLabel, preview.meta.feeLabel].filter(Boolean).join(' · ')}
+                </span>
+              )}
             </div>
 
             {preview.warnings.length > 0 && (
@@ -1526,7 +1672,8 @@ export function OrganizerTab({
           <div className="inline-flex items-center gap-2 text-xs sm:text-sm font-bold text-emerald-200 tabular-nums self-start">
             <Banknote className="w-4 h-4 text-emerald-400" />
             <span>
-              {paidStats.paidCount}/{paidStats.activeCount} pagos · R$ {paidStats.paidValue} / R$ {paidStats.totalValue}
+              {paidStats.paidCount}/{paidStats.activeCount} pagos
+              {match.meta.feeAmount > 0 ? ` · R$ ${paidStats.paidValue} / R$ ${paidStats.totalValue}` : ''}
             </span>
           </div>
         </div>
@@ -1546,13 +1693,14 @@ export function OrganizerTab({
             className="sm:col-span-2 h-10 px-3 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-base tabular-nums"
           />
           <input
+            id="quick-add-name"
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder={
               match.openSlots[0]
                 ? `Preencher vaga #${match.openSlots[0].listNumber} ou novo nome...`
-                : 'Adicionar jogador de última hora...'
+                : 'Nome do jogador...'
             }
             className="sm:col-span-5 h-10 px-3 rounded-lg bg-[#071A12] border border-[var(--chalk-line)] text-base"
           />
@@ -1577,6 +1725,11 @@ export function OrganizerTab({
 
         {/* Player management table/list */}
         <div className="border-t border-[var(--chalk-line)] divide-y divide-[var(--chalk-line)]">
+          {match.players.length === 0 && (
+            <div className="py-8 text-center text-sm text-[var(--ink-muted)]">
+              Nenhum jogador na lista ainda. Cole a lista do WhatsApp acima ou adicione jogadores um por um.
+            </div>
+          )}
           {match.players.map((p) => {
             const nextStatus: Record<PlayerStatus, PlayerStatus> = {
               confirmed: 'doubt',
@@ -1628,7 +1781,13 @@ export function OrganizerTab({
                     }`}
                   >
                     {p.paid && <Check className="w-3 h-3" />}
-                    {p.paid ? `Pago R$ ${match.meta.feeAmount}` : `Pagar R$ ${match.meta.feeAmount}`}
+                    {match.meta.feeAmount > 0
+                      ? p.paid
+                        ? `Pago R$ ${match.meta.feeAmount}`
+                        : `Pagar R$ ${match.meta.feeAmount}`
+                      : p.paid
+                        ? 'Pago'
+                        : 'Pendente'}
                   </button>
 
                   {/* Role toggle */}

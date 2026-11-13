@@ -5,7 +5,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PeladaStore } from './lib/db.mjs';
-import { DEFAULT_SAMPLE_LIST, parseWhatsAppList } from './lib/parser.mjs';
+import { parseWhatsAppList } from './lib/parser.mjs';
 import { formatTeamsForWhatsApp } from './lib/draw.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +39,28 @@ const MIME_TYPES = {
 export function createAppServer({ dbPath } = {}) {
   const store = new PeladaStore(dbPath);
   const sseClients = new Map(); // slug -> Set<res>
+
+  // Simple in-memory brute-force protection for room PINs
+  const authFailures = new Map(); // key -> { count, firstAt }
+  const AUTH_WINDOW_MS = 10 * 60 * 1000;
+  const AUTH_MAX_FAILURES = 10;
+  function isAuthLocked(key) {
+    const entry = authFailures.get(key);
+    if (!entry) return false;
+    if (Date.now() - entry.firstAt > AUTH_WINDOW_MS) {
+      authFailures.delete(key);
+      return false;
+    }
+    return entry.count >= AUTH_MAX_FAILURES;
+  }
+  function registerAuthFailure(key) {
+    const entry = authFailures.get(key);
+    if (!entry || Date.now() - entry.firstAt > AUTH_WINDOW_MS) {
+      authFailures.set(key, { count: 1, firstAt: Date.now() });
+    } else {
+      entry.count += 1;
+    }
+  }
 
   function broadcast(slug, eventName, payload) {
     const set = sseClients.get(slug);
@@ -203,10 +225,6 @@ export function createAppServer({ dbPath } = {}) {
         });
       }
 
-      if (pathname === '/api/template-list' && method === 'GET') {
-        return sendJson(res, 200, { rawList: DEFAULT_SAMPLE_LIST });
-      }
-
       if (pathname === '/api/parse-preview' && method === 'POST') {
         const body = await readBody(req);
         const parsed = parseWhatsAppList(body.rawList || '');
@@ -214,7 +232,9 @@ export function createAppServer({ dbPath } = {}) {
       }
 
       if (pathname === '/api/matches' && method === 'GET') {
-        return sendJson(res, 200, { matches: store.listMatches() });
+        // No global listing (privacy): the browser asks only for the rooms it already knows.
+        const slugs = (url.searchParams.get('slugs') || '').split(',');
+        return sendJson(res, 200, { matches: store.listMatchesBySlugs(slugs) });
       }
 
       if (pathname === '/api/matches' && method === 'POST') {
@@ -226,7 +246,7 @@ export function createAppServer({ dbPath } = {}) {
       // Match-scoped routes
       const matchPrefix = pathname.match(/^\/api\/matches\/([^/]+)(\/.*)?$/);
       if (matchPrefix) {
-        const slug = decodeURIComponent(matchPrefix[1]);
+        const slug = decodeURIComponent(matchPrefix[1]).trim().toLowerCase();
         const subPath = matchPrefix[2] || '';
 
         if (subPath === '' && method === 'GET') {
@@ -276,13 +296,19 @@ export function createAppServer({ dbPath } = {}) {
           const body = await readBody(req);
           const raw = store.getMatchRaw(slug);
           if (!raw) return sendJson(res, 404, { error: 'Pelada não encontrada.' });
+          const limiterKey = `${slug}|${req.socket?.remoteAddress || ''}`;
+          if (isAuthLocked(limiterKey)) {
+            return sendJson(res, 429, { error: 'Muitas tentativas de PIN. Aguarde alguns minutos e tente de novo.' });
+          }
           const ok = store.isAuthorized(raw, {
             adminPin: body.pin || '',
             adminToken: body.token || ''
           });
           if (!ok) {
+            registerAuthFailure(limiterKey);
             return sendJson(res, 401, { error: 'PIN incorreto. Tente novamente.' });
           }
+          authFailures.delete(limiterKey);
           return sendJson(res, 200, {
             match: store.getMatchForClient(slug, { adminToken: raw.adminToken }),
             adminToken: raw.adminToken
@@ -374,7 +400,7 @@ export function createAppServer({ dbPath } = {}) {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro interno inesperado.';
-      const status = /não encontrad|inválid|obrigat|dúvida|nenhum jogador|pelo menos 3 caracteres/i.test(message) ? 400 : 500;
+      const status = /não encontrad|inválid|obrigat|dúvida|nenhum jogador|pelo menos \d+ caracteres|informe o nome/i.test(message) ? 400 : 500;
       sendJson(res, status, { error: message });
     }
   }
@@ -386,14 +412,14 @@ export function createAppServer({ dbPath } = {}) {
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const { server, store } = createAppServer();
+  const { server } = createAppServer();
   const isDev = process.argv.includes('--dev');
   let targetPort = PORT;
 
   server.on('error', (err) => {
     if (err && err.code === 'EADDRINUSE') {
       targetPort += 1;
-      console.log(`⚠️  Porta ocupada, tentando http://localhost:${targetPort} ...`);
+      console.log(`Porta ocupada, tentando http://localhost:${targetPort} ...`);
       server.listen(targetPort, HOST);
     } else {
       console.error('Erro ao iniciar servidor:', err);
@@ -403,25 +429,28 @@ if (isMain) {
 
   server.listen(targetPort, HOST, () => {
     const activePort = server.address()?.port || targetPort;
-    console.log(`\n⚽ TiraTime rodando em: http://localhost:${activePort}`);
-    if (store.generatedInitialPin && !process.env.VERCEL && !process.env.CI) {
-      console.log(`🔑 Primeiro acesso — PIN inicial gerado: ${store.generatedInitialPin}`);
-      console.log('   (Altere na aba Organizador ou configure ADMIN_PIN no .env)');
-    } else if (process.env.ADMIN_PIN) {
-      console.log('🔑 PIN do organizador carregado via ADMIN_PIN.');
-    } else {
-      console.log('🔑 Painel do organizador protegido pelo PIN configurado no banco.');
-    }
+    console.log(`\nTiraTime rodando em: http://localhost:${activePort}`);
+    console.log('Cada organizador cria a própria pelada (nome + PIN) direto na tela inicial.');
     if (!isDev) {
-      console.log(`📱 Para acessar pelo celular no mesmo Wi-Fi, use o IP da sua máquina na porta ${activePort}.\n`);
+      console.log(`Para acessar pelo celular no mesmo Wi-Fi, use o IP da sua máquina na porta ${activePort}.\n`);
     }
   });
 
   if (isDev) {
-    const vite = spawn('npx', ['vite', '--host', '0.0.0.0'], {
-      cwd: __dirname,
-      stdio: 'inherit',
-      shell: false
+    const viteBin = path.join(__dirname, 'node_modules', 'vite', 'bin', 'vite.js');
+    const vite = fs.existsSync(viteBin)
+      ? spawn(process.execPath, [viteBin, '--host', '0.0.0.0'], {
+          cwd: __dirname,
+          stdio: 'inherit',
+          shell: false
+        })
+      : spawn(process.platform === 'win32' ? 'npx.cmd vite --host 0.0.0.0' : 'npx', process.platform === 'win32' ? [] : ['vite', '--host', '0.0.0.0'], {
+          cwd: __dirname,
+          stdio: 'inherit',
+          shell: process.platform === 'win32'
+        });
+    vite.on('error', (err) => {
+      console.error('Não foi possível iniciar o Vite. Rode `npm install` e tente de novo.', err.message);
     });
     const shutdown = () => {
       vite.kill();

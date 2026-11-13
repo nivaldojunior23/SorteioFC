@@ -21,8 +21,12 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export async function fetchMatches(): Promise<MatchSummary[]> {
-  const data = await requestJson<{ matches: MatchSummary[] }>('/api/matches');
+/** Public summaries only for rooms this browser already knows (no global listing). */
+export async function fetchMatches(slugs: string[]): Promise<MatchSummary[]> {
+  if (slugs.length === 0) return [];
+  const data = await requestJson<{ matches: MatchSummary[] }>(
+    `/api/matches?slugs=${encodeURIComponent(slugs.join(','))}`
+  );
   return data.matches;
 }
 
@@ -45,11 +49,14 @@ export async function verifyAdminAuth(slug: string, payload: { pin?: string; tok
 }
 
 export async function createMatch(payload: {
-  groupName?: string;
-  rawList: string;
+  groupName: string;
+  adminPin: string;
+  rawList?: string;
   teamCount?: number;
   drawMode?: 'closed_reveal' | 'live_urn';
-  adminPin?: string;
+  dateLabel?: string;
+  timeLabel?: string;
+  feeAmount?: string | number;
 }): Promise<MatchState> {
   const data = await requestJson<{ match: MatchState }>('/api/matches', {
     method: 'POST',
@@ -65,11 +72,6 @@ export async function previewWhatsAppParse(rawList: string): Promise<ParsePrevie
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rawList })
   });
-}
-
-export async function fetchTemplateList(): Promise<string> {
-  const data = await requestJson<{ rawList: string }>('/api/template-list');
-  return data.rawList;
 }
 
 export async function importMatchList(
@@ -182,18 +184,20 @@ function getAudioContext(): AudioContext | null {
   return audioCtx;
 }
 
-export function playDrawSpinCue(enabled: boolean) {
+export function playDrawSpinCue(enabled: boolean, reducedMotion = false) {
   if (!enabled) return;
   try {
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
-    const ticks = [0, 0.14, 0.28, 0.44, 0.62, 0.82];
+    const ticks = reducedMotion
+      ? [0.02, 0.16]
+      : [0.05, 0.17, 0.30, 0.45, 0.62, 0.81, 1.03, 1.28, 1.56, 1.88, 2.24, 2.65];
     ticks.forEach((offset, idx) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(340 + idx * 55, now + offset);
+      osc.frequency.setValueAtTime(320 + idx * 32, now + offset);
       gain.gain.setValueAtTime(0.06, now + offset);
       gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.08);
       osc.connect(gain);

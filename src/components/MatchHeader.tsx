@@ -2,6 +2,8 @@ import {
   Banknote,
   Calendar,
   Clock,
+  Hash,
+  Home,
   Share2,
   ShieldCheck,
   Shuffle,
@@ -21,7 +23,7 @@ interface MatchHeaderProps {
   soundEnabled: boolean;
   onToggleSound: () => void;
   onShareLink: () => void;
-  liveConnected: boolean;
+  onGoHome: () => void;
 }
 
 export function MatchHeader({
@@ -31,7 +33,7 @@ export function MatchHeader({
   soundEnabled,
   onToggleSound,
   onShareLink,
-  liveConnected
+  onGoHome
 }: MatchHeaderProps) {
   const revealedCount = match.players.filter((p) => p.revealed).length;
   const eligibleCount = match.players.filter(
@@ -44,7 +46,15 @@ export function MatchHeader({
         <div className="max-w-5xl mx-auto px-4 pt-3 pb-2.5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <TiraTimeCrest className="w-11 h-11 shrink-0" />
+              <button
+                type="button"
+                onClick={onGoHome}
+                title="Voltar para a tela inicial / minhas peladas"
+                aria-label="Voltar para a tela inicial"
+                className="tappable shrink-0 rounded-xl focus-visible:outline-none"
+              >
+                <TiraTimeCrest className="w-11 h-11" />
+              </button>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="font-display text-2xl sm:text-3xl font-extrabold uppercase tracking-tight leading-none text-[var(--ink-chalk)]">
@@ -55,32 +65,26 @@ export function MatchHeader({
                       {match.groupName}
                     </span>
                   )}
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold border ${
-                      liveConnected
-                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/35'
-                        : 'bg-amber-950/70 text-amber-200 border-amber-500/30'
-                    }`}
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        liveConnected ? 'bg-emerald-400' : 'bg-amber-400'
-                      }`}
-                    />
-                    {match.drawMode === 'live_urn' ? 'Urna Ao Vivo' : 'Sorteio Fechado'}
-                  </span>
                 </div>
 
                 <div className="mt-1.5 flex items-center flex-wrap gap-x-3.5 gap-y-1 text-xs sm:text-sm text-[var(--ink-sage)]">
-                  <span className="inline-flex items-center gap-1 font-medium">
-                    <Calendar className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
-                    {match.meta.dateLabel}
+                  <span className="inline-flex items-center gap-1 font-mono text-xs text-[var(--ink-muted)]">
+                    <Hash className="w-3 h-3 text-[var(--gold-trophy)]" />
+                    {match.slug}
                   </span>
-                  <span className="inline-flex items-center gap-1 font-medium tabular-nums">
-                    <Clock className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
-                    {match.meta.timeLabel}
-                    {match.meta.arrivalNote ? ` (${match.meta.arrivalNote})` : ''}
-                  </span>
+                  {match.meta.dateLabel && (
+                    <span className="inline-flex items-center gap-1 font-medium">
+                      <Calendar className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
+                      {match.meta.dateLabel}
+                    </span>
+                  )}
+                  {match.meta.timeLabel && (
+                    <span className="inline-flex items-center gap-1 font-medium tabular-nums">
+                      <Clock className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
+                      {match.meta.timeLabel}
+                      {match.meta.arrivalNote ? ` (${match.meta.arrivalNote})` : ''}
+                    </span>
+                  )}
                   {match.meta.feeLabel && (
                     <span className="inline-flex items-center gap-1 font-medium tabular-nums">
                       <Banknote className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />
@@ -92,6 +96,17 @@ export function MatchHeader({
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={onGoHome}
+                title="Minhas peladas / Criar outra sala"
+                aria-label="Voltar para minhas peladas"
+                className="tappable hover-surface h-9 px-2.5 sm:px-3 rounded-lg border border-[var(--chalk-line)] bg-[var(--bg-locker)] inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-[var(--ink-sage)]"
+              >
+                <Home className="w-4 h-4" />
+                <span className="hidden sm:inline">Salas</span>
+              </button>
+
               <button
                 type="button"
                 onClick={onToggleSound}
@@ -145,15 +160,17 @@ export function MatchHeader({
             >
               <Users className="w-4 h-4 shrink-0" />
               <span>Times</span>
-              <span
-                className={`ml-0.5 rounded-full px-1.5 py-0.5 text-xs tabular-nums leading-none ${
-                  activeTab === 'teams'
-                    ? 'bg-[#071A12]/15 text-[#071A12]'
-                    : 'bg-[#071A12]/70 text-[var(--ink-sage)]'
-                }`}
-              >
-                {revealedCount}/{eligibleCount}
-              </span>
+              {eligibleCount > 0 && (
+                <span
+                  className={`ml-0.5 rounded-full px-1.5 py-0.5 text-xs tabular-nums leading-none ${
+                    activeTab === 'teams'
+                      ? 'bg-[#071A12]/15 text-[#071A12]'
+                      : 'bg-[#071A12]/70 text-[var(--ink-sage)]'
+                  }`}
+                >
+                  {revealedCount}/{eligibleCount}
+                </span>
+              )}
             </button>
 
             <button
