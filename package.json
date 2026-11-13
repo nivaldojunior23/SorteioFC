@@ -1,0 +1,33 @@
+{
+  "name": "tira-time",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TiraTime — Sistema de sorteio de times na urna ao vivo e gestão de pelada via lista do WhatsApp",
+  "engines": {
+    "node": ">=22.x"
+  },
+  "scripts": {
+    "dev": "node --watch server.mjs --dev",
+    "dev:client": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@fontsource/archivo": "^5.2.5",
+    "@fontsource/barlow-condensed": "^5.2.5",
+    "lucide-react": "^1.48.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.2.0"
+  }
+}

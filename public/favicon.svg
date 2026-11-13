@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>TiraTime</title><g transform="translate(-12.42 -12.42) scale(1.097)">
+  <title id="title">Escudo TiraTime</title>
+  <!-- Deep turf backing shield -->
+  <path fill="#0A2419" d="
+    M 128 20
+    L 212 42.5
+    L 212 128
+    C 212 182 174 218 128 236
+    C 82 218 44 182 44 128
+    L 44 42.5
+    Z
+  "/>
+  <!-- Gold shield outer border (evenodd cutout) -->
+  <path fill="#EAB308" fill-rule="evenodd" d="
+    M 128 16
+    L 218 40.1
+    L 218 128
+    C 218 184 178 221 128 240
+    C 78 221 38 184 38 128
+    L 38 40.1
+    Z
+    M 128 32
+    L 54 51.8
+    L 54 128
+    C 54 174 88 204 128 221
+    C 168 204 202 174 202 128
+    L 202 51.8
+    Z
+  "/>
+  <!-- Geometric football circle + cutout pentagon (center 128, 96) -->
+  <path fill="#F5F2E8" fill-rule="evenodd" d="
+    M 128 62 A 34 34 0 1 1 127.9 62 Z
+    M 128 81 L 142.3 91.4 L 136.8 108.1 L 119.2 108.1 L 113.7 91.4 Z
+  "/>
+  <!-- 5 radial seam lines aligned exactly to pentagon vertices -->
+  <path fill="#0A2419" d="
+    M 125.5 61 L 130.5 61 L 130.5 82 L 125.5 82 Z
+    M 141.5 89.0 L 160.5 82.8 L 162.1 87.6 L 143.1 93.8 Z
+    M 138.8 106.7 L 150.6 122.9 L 146.6 125.8 L 134.8 109.6 Z
+    M 117.2 106.7 L 105.4 122.9 L 109.4 125.8 L 121.2 109.6 Z
+    M 114.5 89.0 L 95.5 82.8 L 93.9 87.6 L 112.9 93.8 Z
+  "/>
+  <!-- Canoe hull silhouette -->
+  <path fill="#EAB308" d="
+    M 72 138
+    C 94 156 162 156 184 138
+    L 172 164
+    C 152 178 104 178 84 164
+    Z
+  "/>
+  <!-- Clean 30-degree river/turf chevron wave -->
+  <path fill="#F5F2E8" d="
+    M 92 176
+    L 128 196.8
+    L 164 176
+    L 164 188
+    L 128 208.8
+    L 92 188
+    Z
+  "/>
+</g></svg>
