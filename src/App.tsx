@@ -197,11 +197,12 @@ export function App() {
     if (!match) return;
     const shareUrl = `${window.location.origin}/?pelada=${encodeURIComponent(match.slug)}`;
     const when = [match.meta.dateLabel, match.meta.timeLabel].filter(Boolean).join(' · ');
-    const shareText = `${match.groupName}${when ? ` (${when})` : ''}\nEntre no link e descubra seu time: ${shareUrl}`;
+    const sharePrompt = `${match.groupName}${when ? ` (${when})` : ''}\nEntre no link e descubra seu time:`;
+    const shareText = `${sharePrompt} ${shareUrl}`;
 
     if (navigator.share) {
       try {
-        await navigator.share({ title: `${match.groupName} — TiraTime`, text: shareText, url: shareUrl });
+        await navigator.share({ title: `${match.groupName} — TiraTime`, text: sharePrompt, url: shareUrl });
         return;
       } catch {
         // fallback to clipboard

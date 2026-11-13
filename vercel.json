@@ -9,7 +9,7 @@
       "destination": "/api/index.mjs"
     },
     {
-      "source": "/((?!api/|assets/|favicon|icon-|apple-touch-icon|maskable-|site\\.webmanifest).*)",
+      "source": "/((?!api/|assets/|favicon|icon-|apple-touch-icon|maskable-|og-|site\\.webmanifest).*)",
       "destination": "/index.html"
     }
   ]
