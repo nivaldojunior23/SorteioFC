@@ -20,7 +20,7 @@ cp .env.example .env
 
 ## 🚀 Como rodar localmente
 
-Requer **Node.js 22+** (usa o banco nativo `node:sqlite`, sem dependências externas compiladas):
+Requer **Node.js 22+** (usa o banco nativo `node:sqlite` localmente, sem dependências externas compiladas):
 
 ```bash
 npm install

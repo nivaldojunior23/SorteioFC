@@ -239,3 +239,162 @@ test('Vercel serverless handler (api/index.mjs) and VERCEL=1 mode work cleanly',
     await new Promise((resolve) => srv.close(resolve));
   }
 });
+
+test('PostgresStore persists rooms, players, auth, settings and live urn draws via SQL pool', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { PostgresStore, buildPoolConfig } = await import('../lib/pg-store.mjs');
+
+  const neonCfg = buildPoolConfig('postgresql://user:pass@ep-cool-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require');
+  assert.match(neonCfg.connectionString, /sslmode=verify-full/);
+
+  const localCfg = buildPoolConfig('postgres://postgres:postgres@localhost:5432/tiratime?sslmode=disable');
+  assert.equal(localCfg.ssl, false);
+
+  const otherCfg = buildPoolConfig('postgresql://user:pass@db.example.com:5432/tiratime?sslmode=require');
+  assert.deepEqual(otherCfg.ssl, { rejectUnauthorized: false });
+
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec('PRAGMA foreign_keys = ON;');
+
+  const runSql = (sqlText, params = []) => {
+    const trimmed = sqlText.trim();
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(trimmed)) {
+      sqlite.exec(trimmed);
+      return { rows: [], rowCount: 0 };
+    }
+    if (params.length === 0 && trimmed.includes(';')) {
+      sqlite.exec(trimmed.replace(/DOUBLE PRECISION/gi, 'REAL'));
+      return { rows: [], rowCount: 0 };
+    }
+
+    const flatParams = [];
+    let normalized = trimmed.replace(/\bFOR UPDATE\b/gi, '');
+    normalized = normalized.replace(/ANY\(\$(\d+)::text\[\]\)/gi, (_m, idxStr) => {
+      const arr = params[Number(idxStr) - 1] || [];
+      return `(${arr.map((val) => {
+        flatParams.push(val);
+        return '?';
+      }).join(', ')})`;
+    });
+    if (!trimmed.includes('ANY(')) {
+      normalized = normalized.replace(/\$(\d+)/g, (_m, idxStr) => {
+        flatParams.push(params[Number(idxStr) - 1]);
+        return '?';
+      });
+    }
+
+    if (/^\s*SELECT\b/i.test(normalized)) {
+      const rows = sqlite.prepare(normalized).all(...flatParams);
+      return { rows, rowCount: rows.length };
+    }
+    const info = sqlite.prepare(normalized).run(...flatParams);
+    return { rows: [], rowCount: info.changes };
+  };
+
+  const mockPool = {
+    async query(sql, params) {
+      return runSql(sql, params);
+    },
+    async connect() {
+      return {
+        async query(sql, params) {
+          return runSql(sql, params);
+        },
+        release() {}
+      };
+    },
+    async end() {
+      sqlite.close();
+    }
+  };
+
+  const pgStore = new PostgresStore(mockPool);
+  const { server } = createAppServer({ store: pgStore });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    const createRes = await fetch(`${baseUrl}/api/matches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupName: 'Los Canoas', adminPin: '1234' })
+    });
+    assert.equal(createRes.status, 201);
+    const { match: created } = await createRes.json();
+    const slug = created.slug;
+    assert.match(slug, /^los-canoas-[a-z0-9]{4,5}$/);
+
+    const listRes = await fetch(`${baseUrl}/api/matches?slugs=${encodeURIComponent(slug)}`);
+    const listed = await listRes.json();
+    assert.equal(listed.matches.length, 1);
+    assert.equal(listed.matches[0].groupName, 'Los Canoas');
+
+    const authRes = await fetch(`${baseUrl}/api/matches/${slug}/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '1234' })
+    });
+    assert.equal(authRes.status, 200);
+    const authJson = await authRes.json();
+    assert.equal(authJson.match.groupName, 'Los Canoas');
+
+    const importRes = await fetch(`${baseUrl}/api/matches/${slug}/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': authJson.adminToken },
+      body: JSON.stringify({ rawList: DEFAULT_SAMPLE_LIST })
+    });
+    assert.equal(importRes.status, 200);
+    const { match: imported } = await importRes.json();
+    assert.equal(imported.players.length, 20);
+
+    const patchRes = await fetch(`${baseUrl}/api/matches/${slug}/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': authJson.adminToken },
+      body: JSON.stringify({ groupName: 'Los Canoas FC', feeAmount: 15, adminPin: '4321' })
+    });
+    assert.equal(patchRes.status, 200);
+    const { match: updated } = await patchRes.json();
+    assert.equal(updated.groupName, 'Los Canoas FC');
+    assert.equal(updated.meta.feeAmount, 15);
+
+    const newAuth = await fetch(`${baseUrl}/api/matches/${slug}/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '4321' })
+    });
+    assert.equal(newAuth.status, 200);
+    const newAuthJson = await newAuth.json();
+
+    const firstPlayer = updated.players.find((p) => p.status === 'confirmed');
+    const revealRes = await fetch(`${baseUrl}/api/matches/${slug}/players/${firstPlayer.id}/reveal`, {
+      method: 'POST'
+    });
+    assert.equal(revealRes.status, 200);
+    const revealed = await revealRes.json();
+    assert.equal(revealed.player.revealed, true);
+    assert.ok(revealed.team.id);
+
+    const addRes = await fetch(`${baseUrl}/api/matches/${slug}/players`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': newAuthJson.adminToken },
+      body: JSON.stringify({ name: 'Nivaldo', role: 'outfield', paid: true })
+    });
+    assert.equal(addRes.status, 200);
+    const addedMatch = (await addRes.json()).match;
+    const nivaldo = addedMatch.players.find((p) => p.name === 'Nivaldo');
+    assert.equal(nivaldo.paid, true);
+
+    const updPlayerRes = await fetch(`${baseUrl}/api/matches/${slug}/players/${nivaldo.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': newAuthJson.adminToken },
+      body: JSON.stringify({ paid: false })
+    });
+    assert.equal(updPlayerRes.status, 200);
+    const updatedPlayerMatch = (await updPlayerRes.json()).match;
+    assert.equal(updatedPlayerMatch.players.find((p) => p.id === nivaldo.id).paid, false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await pgStore.close();
+  }
+});

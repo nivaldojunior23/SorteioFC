@@ -5,6 +5,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PeladaStore } from './lib/db.mjs';
+import { PostgresStore, resolvePostgresUrl } from './lib/pg-store.mjs';
 import { parseWhatsAppList } from './lib/parser.mjs';
 import { formatTeamsForWhatsApp } from './lib/draw.mjs';
 
@@ -36,8 +37,16 @@ const MIME_TYPES = {
   '.webmanifest': 'application/manifest+json; charset=utf-8'
 };
 
-export function createAppServer({ dbPath } = {}) {
-  const store = new PeladaStore(dbPath);
+export function createAppServer({ dbPath, postgresUrl, store: customStore } = {}) {
+  const resolvedPgUrl = customStore ? '' : resolvePostgresUrl(postgresUrl);
+  const store = customStore || (resolvedPgUrl ? new PostgresStore(resolvedPgUrl) : new PeladaStore(dbPath));
+  const storageMode = customStore
+    ? 'custom'
+    : resolvedPgUrl
+      ? 'postgres'
+      : process.env.VERCEL
+        ? 'ephemeral'
+        : 'sqlite';
   const sseClients = new Map(); // slug -> Set<res>
 
   // Simple in-memory brute-force protection for room PINs
@@ -110,10 +119,15 @@ export function createAppServer({ dbPath } = {}) {
     };
   }
 
-  function requireAdmin(slug, req, res) {
-    const raw = store.getMatchRaw(slug);
+  const notFoundError =
+    storageMode === 'ephemeral'
+      ? 'Pelada não encontrada. A Vercel está usando armazenamento temporário — conecte um banco Postgres (Neon) gratuito na aba Storage.'
+      : 'Pelada não encontrada.';
+
+  async function requireAdmin(slug, req, res) {
+    const raw = await store.getMatchRaw(slug);
     if (!raw) {
-      sendJson(res, 404, { error: 'Pelada não encontrada.' });
+      sendJson(res, 404, { error: notFoundError });
       return null;
     }
     const auth = getAuthFromReq(req);
@@ -212,13 +226,21 @@ export function createAppServer({ dbPath } = {}) {
       }
 
       if (pathname === '/api/health' && method === 'GET') {
-        return sendJson(res, 200, { ok: true, service: 'tiratime' });
+        return sendJson(res, 200, { ok: true, service: 'tiratime', storage: storageMode });
       }
 
       if (pathname === '/api/network-info' && method === 'GET') {
         const auth = getAuthFromReq(req);
-        const matches = store.listMatches();
-        const isAnyAdmin = matches.some((m) => store.isAuthorized(store.getMatchRaw(m.slug), auth));
+        const matches = await store.listMatches();
+        let isAnyAdmin = false;
+        if (auth.adminToken || auth.adminPin) {
+          for (const m of matches) {
+            if (store.isAuthorized(await store.getMatchRaw(m.slug), auth)) {
+              isAnyAdmin = true;
+              break;
+            }
+          }
+        }
         return sendJson(res, 200, {
           port: getBoundPort(),
           lanUrls: isAnyAdmin ? getLanUrls(req.headers.host) : []
@@ -234,12 +256,12 @@ export function createAppServer({ dbPath } = {}) {
       if (pathname === '/api/matches' && method === 'GET') {
         // No global listing (privacy): the browser asks only for the rooms it already knows.
         const slugs = (url.searchParams.get('slugs') || '').split(',');
-        return sendJson(res, 200, { matches: store.listMatchesBySlugs(slugs) });
+        return sendJson(res, 200, { matches: await store.listMatchesBySlugs(slugs) });
       }
 
       if (pathname === '/api/matches' && method === 'POST') {
         const body = await readBody(req);
-        const created = store.createMatch(body);
+        const created = await store.createMatch(body);
         return sendJson(res, 201, { match: created });
       }
 
@@ -251,14 +273,14 @@ export function createAppServer({ dbPath } = {}) {
 
         if (subPath === '' && method === 'GET') {
           const auth = getAuthFromReq(req);
-          const match = store.getMatchForClient(slug, auth);
-          if (!match) return sendJson(res, 404, { error: 'Pelada não encontrada.' });
+          const match = await store.getMatchForClient(slug, auth);
+          if (!match) return sendJson(res, 404, { error: notFoundError });
           return sendJson(res, 200, { match });
         }
 
         if (subPath === '/events' && method === 'GET') {
-          const exists = store.getMatchRaw(slug);
-          if (!exists) return sendJson(res, 404, { error: 'Pelada não encontrada.' });
+          const exists = await store.getMatchRaw(slug);
+          if (!exists) return sendJson(res, 404, { error: notFoundError });
 
           res.writeHead(200, {
             'Content-Type': 'text/event-stream; charset=utf-8',
@@ -294,8 +316,8 @@ export function createAppServer({ dbPath } = {}) {
 
         if (subPath === '/auth' && method === 'POST') {
           const body = await readBody(req);
-          const raw = store.getMatchRaw(slug);
-          if (!raw) return sendJson(res, 404, { error: 'Pelada não encontrada.' });
+          const raw = await store.getMatchRaw(slug);
+          if (!raw) return sendJson(res, 404, { error: notFoundError });
           const limiterKey = `${slug}|${req.socket?.remoteAddress || ''}`;
           if (isAuthLocked(limiterKey)) {
             return sendJson(res, 429, { error: 'Muitas tentativas de PIN. Aguarde alguns minutos e tente de novo.' });
@@ -310,52 +332,56 @@ export function createAppServer({ dbPath } = {}) {
           }
           authFailures.delete(limiterKey);
           return sendJson(res, 200, {
-            match: store.getMatchForClient(slug, { adminToken: raw.adminToken }),
+            match: await store.getMatchForClient(slug, { adminToken: raw.adminToken }),
             adminToken: raw.adminToken
           });
         }
 
         if (subPath === '/whatsapp-export' && method === 'GET') {
           const auth = getAuthFromReq(req);
-          const match = store.getMatchForClient(slug, auth);
-          if (!match) return sendJson(res, 404, { error: 'Pelada não encontrada.' });
+          const match = await store.getMatchForClient(slug, auth);
+          if (!match) return sendJson(res, 404, { error: notFoundError });
           return sendJson(res, 200, { text: formatTeamsForWhatsApp(match) });
         }
 
         if (subPath === '/import' && method === 'POST') {
-          const raw = requireAdmin(slug, req, res);
+          const raw = await requireAdmin(slug, req, res);
           if (!raw) return;
           const body = await readBody(req);
-          const updated = store.importRawList(slug, body.rawList || '', {
+          const updated = await store.importRawList(slug, body.rawList || '', {
             autoDraw: body.autoDraw !== false
           });
+          if (!updated) return sendJson(res, 404, { error: notFoundError });
           broadcast(slug, 'match_updated', { updatedAt: updated.updatedAt, reason: 'import' });
           return sendJson(res, 200, { match: updated });
         }
 
         if (subPath === '/settings' && method === 'PATCH') {
-          const raw = requireAdmin(slug, req, res);
+          const raw = await requireAdmin(slug, req, res);
           if (!raw) return;
           const body = await readBody(req);
-          const updated = store.updateSettings(slug, body);
+          const updated = await store.updateSettings(slug, body);
+          if (!updated) return sendJson(res, 404, { error: notFoundError });
           broadcast(slug, 'match_updated', { updatedAt: updated.updatedAt, reason: 'settings' });
           return sendJson(res, 200, { match: updated });
         }
 
         if (subPath === '/draw' && method === 'POST') {
-          const raw = requireAdmin(slug, req, res);
+          const raw = await requireAdmin(slug, req, res);
           if (!raw) return;
           const body = await readBody(req);
-          const updated = store.executeDrawAction(slug, body.action || 'run_full_draw');
+          const updated = await store.executeDrawAction(slug, body.action || 'run_full_draw');
+          if (!updated) return sendJson(res, 404, { error: notFoundError });
           broadcast(slug, 'match_updated', { updatedAt: updated.updatedAt, reason: 'draw' });
           return sendJson(res, 200, { match: updated });
         }
 
         if (subPath === '/players' && method === 'POST') {
-          const raw = requireAdmin(slug, req, res);
+          const raw = await requireAdmin(slug, req, res);
           if (!raw) return;
           const body = await readBody(req);
-          const updated = store.addPlayer(slug, body);
+          const updated = await store.addPlayer(slug, body);
+          if (!updated) return sendJson(res, 404, { error: notFoundError });
           broadcast(slug, 'match_updated', { updatedAt: updated.updatedAt, reason: 'player_added' });
           return sendJson(res, 200, { match: updated });
         }
@@ -363,8 +389,8 @@ export function createAppServer({ dbPath } = {}) {
         const revealMatch = subPath.match(/^\/players\/([^/]+)\/reveal$/);
         if (revealMatch && method === 'POST') {
           const playerId = decodeURIComponent(revealMatch[1]);
-          const result = store.revealPlayerTeam(slug, playerId);
-          if (!result) return sendJson(res, 404, { error: 'Pelada não encontrada.' });
+          const result = await store.revealPlayerTeam(slug, playerId);
+          if (!result) return sendJson(res, 404, { error: notFoundError });
           broadcast(slug, 'player_revealed', {
             playerId: result.player.id,
             playerName: result.player.name,
@@ -376,11 +402,12 @@ export function createAppServer({ dbPath } = {}) {
 
         const playerPatchMatch = subPath.match(/^\/players\/([^/]+)$/);
         if (playerPatchMatch && method === 'PATCH') {
-          const raw = requireAdmin(slug, req, res);
+          const raw = await requireAdmin(slug, req, res);
           if (!raw) return;
           const playerId = decodeURIComponent(playerPatchMatch[1]);
           const body = await readBody(req);
-          const updated = store.updatePlayer(slug, playerId, body);
+          const updated = await store.updatePlayer(slug, playerId, body);
+          if (!updated) return sendJson(res, 404, { error: notFoundError });
           broadcast(slug, 'match_updated', { updatedAt: updated.updatedAt, reason: 'player_updated' });
           return sendJson(res, 200, { match: updated });
         }
@@ -400,7 +427,7 @@ export function createAppServer({ dbPath } = {}) {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro interno inesperado.';
-      const status = /não encontrad|inválid|obrigat|dúvida|nenhum jogador|pelo menos \d+ caracteres|informe o nome/i.test(message) ? 400 : 500;
+      const status = /não encontrad|inválid|obrigat|dúvida|nenhum jogador|pelo menos \d+ (?:caracteres|letras)|informe o nome/i.test(message) ? 400 : 500;
       sendJson(res, status, { error: message });
     }
   }
