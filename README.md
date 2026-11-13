@@ -41,11 +41,3 @@ npm run dev
 ```bash
 npm test
 ```
-
-## ☁️ Publicar na Vercel
-
-O projeto já vem pronto com `vercel.json` e Serverless Function em `api/index.mjs`:
-
-1. Suba este repositório no seu **GitHub** e importe na **Vercel**.
-2. Nas **Environment Variables** do projeto na Vercel, configure `ADMIN_PIN` com o PIN desejado para o painel do organizador.
-3. A Vercel executa `npm run build` para gerar o frontend em `dist/` e roteia `/api/*` para `api/index.mjs`.
