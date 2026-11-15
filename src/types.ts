@@ -53,6 +53,7 @@ export interface MatchState {
   revealAllPublic: boolean;
   includeDoubts: boolean;
   balanceGk: boolean;
+  lockOnePerDevice: boolean;
   teams: TeamConfig[];
   openSlots: OpenSlot[];
   warnings: string[];
@@ -70,6 +71,8 @@ export interface MatchSummary {
   title: string;
   dateLabel: string;
   timeLabel: string;
+  feeLabel?: string;
+  playerCount?: number;
   drawMode: DrawMode;
   drawStatus: string;
   updatedAt: string;

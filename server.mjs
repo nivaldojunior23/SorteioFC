@@ -174,7 +174,7 @@ export function createAppServer({ dbPath, postgresUrl, store: customStore } = {}
         const ext = path.extname(filePath).toLowerCase();
         res.writeHead(200, {
           'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-          'Cache-Control': ext === '.html' ? 'no-store' : 'public, max-age=3600'
+          'Cache-Control': ext === '.html' || safePath.endsWith('sw.js') ? 'no-store' : 'public, max-age=3600'
         });
         fs.createReadStream(filePath).pipe(res);
         return true;
@@ -217,7 +217,7 @@ export function createAppServer({ dbPath, postgresUrl, store: customStore } = {}
         res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-pin, x-admin-token');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
       }
       if (method === 'OPTIONS') {
         res.writeHead(204);
@@ -276,6 +276,26 @@ export function createAppServer({ dbPath, postgresUrl, store: customStore } = {}
           const match = await store.getMatchForClient(slug, auth);
           if (!match) return sendJson(res, 404, { error: notFoundError });
           return sendJson(res, 200, { match });
+        }
+
+        if (subPath === '' && method === 'DELETE') {
+          const raw = await requireAdmin(slug, req, res);
+          if (!raw) return;
+          const deleted = await store.deleteMatch(slug);
+          if (!deleted) return sendJson(res, 404, { error: notFoundError });
+          broadcast(slug, 'match_deleted', { slug });
+          const clients = sseClients.get(slug);
+          if (clients) {
+            for (const clientRes of clients) {
+              try {
+                clientRes.end();
+              } catch {
+                // ignore
+              }
+            }
+            sseClients.delete(slug);
+          }
+          return sendJson(res, 200, { ok: true, deleted: true, slug });
         }
 
         if (subPath === '/events' && method === 'GET') {

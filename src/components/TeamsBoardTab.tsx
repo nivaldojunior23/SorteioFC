@@ -47,7 +47,7 @@ export function TeamsBoardTab({ match, adminAuth, onToast }: TeamsBoardTabProps)
   return (
     <section className="max-w-5xl mx-auto px-4 py-5 space-y-5">
       {/* Top summary bar */}
-      <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="rounded-2xl panel-hero border border-[var(--chalk-line)] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="font-display text-2xl sm:text-3xl font-bold uppercase text-[var(--ink-chalk)]">
             Prancheta dos Times
@@ -105,12 +105,17 @@ export function TeamsBoardTab({ match, adminAuth, onToast }: TeamsBoardTabProps)
           const outfieldCap = Math.max(3, team.outfieldCap ?? 6);
           const targetTotal = gkCap + outfieldCap;
 
-          const visibleGks = visibleRoster.filter((p) => p.role === 'gk');
-          const visibleOutfield = visibleRoster.filter((p) => p.role !== 'gk');
+          const visibleGks = match.balanceGk ? visibleRoster.filter((p) => p.role === 'gk') : [];
+          const visibleOutfield = match.balanceGk
+            ? visibleRoster.filter((p) => p.role !== 'gk')
+            : visibleRoster;
           const gkCount = visibleGks.length;
+          const totalHiddenSlots = Math.max(0, targetTotal - visibleRoster.length);
+          const hiddenGkSlots = match.balanceGk
+            ? Math.min(totalHiddenSlots, Math.max(0, gkCap - gkCount))
+            : 0;
+          const hiddenLineSlots = Math.max(0, totalHiddenSlots - hiddenGkSlots);
           const lineCount = visibleOutfield.length;
-          const hiddenGkSlots = Math.max(0, gkCap - gkCount);
-          const hiddenLineSlots = Math.max(0, outfieldCap - lineCount);
 
           return (
             <article
@@ -147,6 +152,7 @@ export function TeamsBoardTab({ match, adminAuth, onToast }: TeamsBoardTabProps)
                   team={team}
                   players={visibleRoster}
                   hiddenCount={hiddenLineSlots}
+                  balanceGk={match.balanceGk}
                 />
               </div>
 

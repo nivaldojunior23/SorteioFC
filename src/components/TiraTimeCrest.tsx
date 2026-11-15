@@ -153,16 +153,29 @@ export const FORMATION_LAYOUTS: Record<number, Array<[number, number, string]>> 
 export function MiniPitchSvg({
   team,
   players,
-  hiddenCount = 0
+  hiddenCount = 0,
+  balanceGk = true
 }: {
   team: TeamConfig;
   players: Player[];
   hiddenCount?: number;
+  balanceGk?: boolean;
 }) {
-  const gks = players.filter((p) => p.role === 'gk');
-  const outfields = players.filter((p) => p.role !== 'gk');
-
   const targetOutfield = team.outfieldCap ?? 6;
+  const explicitGks = players.filter((p) => p.role === 'gk');
+  const explicitOutfields = players.filter((p) => p.role !== 'gk');
+  const gkPlayer =
+    explicitGks[0] ??
+    (!balanceGk || explicitOutfields.length > targetOutfield
+      ? explicitOutfields[0]
+      : undefined);
+  const outfields =
+    explicitGks.length > 0
+      ? [...explicitOutfields, ...explicitGks.slice(1)]
+      : gkPlayer
+        ? explicitOutfields.slice(1)
+        : explicitOutfields;
+
   const layout = FORMATION_LAYOUTS[targetOutfield] || FORMATION_LAYOUTS[6];
   const slots: Array<[number, number]> = layout.map(([x, y]) => [x, y]);
   const totalOutfieldTokens = Math.max(targetOutfield, outfields.length + hiddenCount);
@@ -234,8 +247,8 @@ export function MiniPitchSvg({
         strokeWidth="1.5"
       />
 
-      {/* Goalkeeper marker (left goal box) */}
-      {gks.length > 0 ? (
+      {/* Goalkeeper marker (left goal box) — always 1 in goal on the pitch */}
+      {gkPlayer ? (
         <g>
           <circle cx="22" cy="68" r="11" fill="#EAB308" stroke="#071A12" strokeWidth="2" />
           <text
@@ -246,7 +259,7 @@ export function MiniPitchSvg({
             fontWeight="700"
             fill="#071A12"
           >
-            {getInitials(gks[0].name)}
+            {getInitials(gkPlayer.name)}
           </text>
         </g>
       ) : (

@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeftRight,
+  Check,
   CheckCircle2,
+  Copy,
   Search,
   Shield,
-  Sparkles,
+  UserCheck,
   Users,
   X
 } from 'lucide-react';
 import { playDrawSpinCue, playRevealSuccessCue, revealPlayer } from '../lib/api';
+import { getDeviceDrawLock, saveDeviceDrawLock } from '../lib/recent';
 import type { MatchState, Player, TeamConfig } from '../types';
 import { TiraTimeCrest, VestBadge } from './TiraTimeCrest';
 
@@ -35,7 +38,10 @@ export function PlayerDrawTab({
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<RosterFilter>('all');
   const [isDrawing, setIsDrawing] = useState(false);
+  const [confirmingPlayerId, setConfirmingPlayerId] = useState<string | null>(null);
   const [cyclingIdx, setCyclingIdx] = useState(0);
+  const [drawStage, setDrawStage] = useState<'shuffling' | 'picking' | 'revealing'>('shuffling');
+  const [copiedTeam, setCopiedTeam] = useState(false);
   const [revealedResult, setRevealedResult] = useState<{
     team: TeamConfig;
     teammates: Player[];
@@ -47,10 +53,27 @@ export function PlayerDrawTab({
     [match.players, selectedPlayerId]
   );
 
+  // When organizer enables "1 jogador por celular", keep track of the already-revealed player
+  // on this device (automatically resets if a new week / redraw clears player reveals).
+  const activeDeviceLock = useMemo(() => {
+    if (!match.lockOnePerDevice) return null;
+    const saved = getDeviceDrawLock(match.slug);
+    if (!saved) return null;
+    return match.players.find((p) => p.id === saved.playerId && p.revealed) ?? null;
+  }, [match.lockOnePerDevice, match.slug, match.players]);
+
   // Sync revealedResult when selectedPlayer changes or SSE updates arrive
   useEffect(() => {
     setErrorMsg(null);
-    if (!selectedPlayer || !selectedPlayer.revealed || !selectedPlayer.teamId) {
+    setConfirmingPlayerId(null);
+    if (selectedPlayerId && !selectedPlayer) {
+      onSelectPlayer(null);
+    }
+    if (
+      !selectedPlayer ||
+      (!selectedPlayer.revealed && !match.revealAllPublic) ||
+      !selectedPlayer.teamId
+    ) {
       setRevealedResult(null);
       return;
     }
@@ -63,11 +86,29 @@ export function PlayerDrawTab({
       (p) => p.teamId === team.id && p.id !== selectedPlayer.id
     );
     setRevealedResult({ team, teammates });
-  }, [selectedPlayer, match.teams, match.players]);
+  }, [selectedPlayer, match.teams, match.players, match.revealAllPublic]);
+
+  // Mobile-first ergonomics: lock body scroll and dismiss on Escape when confirmation sheet is open
+  useEffect(() => {
+    if (!confirmingPlayerId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmingPlayerId(null);
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [confirmingPlayerId]);
 
   // Cycle team vest preview with progressive deceleration during the 3s draw animation
   useEffect(() => {
-    if (!isDrawing || match.teams.length === 0) return;
+    if (!isDrawing || match.teams.length === 0) {
+      setDrawStage('shuffling');
+      return;
+    }
     let cancelled = false;
     let timerId: number | undefined;
     const startedAt = Date.now();
@@ -76,11 +117,28 @@ export function PlayerDrawTab({
       if (cancelled) return;
       setCyclingIdx((prev) => (prev + 1) % match.teams.length);
       const elapsed = Date.now() - startedAt;
-      const delay = elapsed < 1000 ? 120 : elapsed < 1800 ? 185 : elapsed < 2450 ? 270 : 420;
+
+      if (elapsed < 1100) {
+        setDrawStage('shuffling');
+      } else if (elapsed < 2200) {
+        setDrawStage('picking');
+      } else {
+        setDrawStage('revealing');
+      }
+
+      const delay =
+        elapsed < 900
+          ? 90
+          : elapsed < 1600
+            ? 140
+            : elapsed < 2300
+              ? 220
+              : 360;
+
       timerId = window.setTimeout(step, delay);
     };
 
-    timerId = window.setTimeout(step, 120);
+    timerId = window.setTimeout(step, 90);
     return () => {
       cancelled = true;
       if (timerId !== undefined) window.clearTimeout(timerId);
@@ -96,8 +154,9 @@ export function PlayerDrawTab({
 
     return match.players.filter((p) => {
       if (p.status === 'out') return false;
-      if (filter === 'pending' && p.revealed) return false;
-      if (filter === 'revealed' && !p.revealed) return false;
+      const isPlayerRevealed = Boolean((p.revealed || match.revealAllPublic) && p.teamId);
+      if (filter === 'pending' && isPlayerRevealed) return false;
+      if (filter === 'revealed' && !isPlayerRevealed) return false;
       if (!q) return true;
       const normName = p.name
         .normalize('NFD')
@@ -105,10 +164,12 @@ export function PlayerDrawTab({
         .toLowerCase();
       return normName.includes(q) || String(p.listNumber || '').includes(q);
     });
-  }, [match.players, query, filter]);
+  }, [match.players, match.revealAllPublic, query, filter]);
 
-  const outfieldPlayers = filteredPlayers.filter((p) => p.role !== 'gk');
-  const goalkeepers = filteredPlayers.filter((p) => p.role === 'gk');
+  const outfieldPlayers = match.balanceGk
+    ? filteredPlayers.filter((p) => p.role !== 'gk')
+    : filteredPlayers;
+  const goalkeepers = match.balanceGk ? filteredPlayers.filter((p) => p.role === 'gk') : [];
 
   const teamById = useMemo(() => {
     const map = new Map<string, TeamConfig>();
@@ -120,6 +181,14 @@ export function PlayerDrawTab({
     if (!selectedPlayer || isDrawing) return;
     setErrorMsg(null);
 
+    if (activeDeviceLock && activeDeviceLock.id !== selectedPlayer.id) {
+      setConfirmingPlayerId(null);
+      setErrorMsg(
+        `Neste celular você já sorteou o time de ${activeDeviceLock.name}. Peça para ${selectedPlayer.name} sortear no próprio aparelho.`
+      );
+      return;
+    }
+
     if (selectedPlayer.status === 'doubt' && !match.includeDoubts && !selectedPlayer.teamId) {
       setErrorMsg(
         `${selectedPlayer.name} está marcado como dúvida. Peça ao organizador para confirmar a presença no painel antes do sorteio.`
@@ -127,6 +196,7 @@ export function PlayerDrawTab({
       return;
     }
 
+    setConfirmingPlayerId(null);
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -140,6 +210,7 @@ export function PlayerDrawTab({
         revealPlayer(match.slug, selectedPlayer.id),
         new Promise((resolve) => setTimeout(resolve, spinDuration))
       ]);
+      saveDeviceDrawLock(match.slug, res.player.id, res.player.name);
       onMatchUpdated(res.match);
       setRevealedResult({ team: res.team, teammates: res.teammates });
       playRevealSuccessCue(soundEnabled);
@@ -154,27 +225,34 @@ export function PlayerDrawTab({
     const assignedTeam =
       revealedResult?.team ??
       (selectedPlayer.teamId ? teamById.get(selectedPlayer.teamId) ?? null : null);
+    const isSelectedRevealed = Boolean(
+      (selectedPlayer.revealed || match.revealAllPublic) && assignedTeam
+    );
 
     const previewTeam = match.teams[cyclingIdx % Math.max(1, match.teams.length)];
     const isBlockedDoubt =
       selectedPlayer.status === 'doubt' && !match.includeDoubts && !selectedPlayer.teamId;
+    const isLockedByDevice = Boolean(
+      activeDeviceLock && activeDeviceLock.id !== selectedPlayer.id && !isSelectedRevealed
+    );
+    const isConfirmingIdentity = confirmingPlayerId === selectedPlayer.id && !isDrawing;
 
     return (
-      <section className="max-w-2xl mx-auto px-4 py-6">
+      <section className="max-w-2xl mx-auto px-3 sm:px-4 py-3 sm:py-6">
         <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] overflow-hidden">
           {/* Selected player identity bar */}
-          <div className="px-4 sm:px-6 py-4 border-b border-[var(--chalk-line)] bg-[var(--bg-pitch)] flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="w-10 h-10 rounded-xl bg-[#071A12] border border-[var(--chalk-line-strong)] flex items-center justify-center font-display text-xl font-bold text-[var(--gold-trophy)] tabular-nums shrink-0">
+          <div className="px-3.5 sm:px-6 py-2.5 sm:py-3.5 border-b border-[var(--chalk-line)] bg-[var(--bg-pitch)] flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#071A12] border border-[var(--chalk-line-strong)] flex items-center justify-center font-display text-lg sm:text-xl font-bold text-[var(--gold-trophy)] tabular-nums shrink-0">
                 {selectedPlayer.listNumber ?? '•'}
               </span>
               <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="font-display text-2xl font-bold uppercase tracking-tight text-[var(--ink-chalk)] truncate">
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                  <h2 className="font-display text-xl sm:text-2xl font-bold uppercase tracking-tight text-[var(--ink-chalk)] truncate">
                     {selectedPlayer.name}
                   </h2>
                   <span
-                    className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                    className={`rounded-md px-1.5 sm:px-2 py-0.5 text-[11px] sm:text-xs font-semibold ${
                       selectedPlayer.role === 'gk'
                         ? 'bg-amber-500/20 text-amber-200 border border-amber-400/30'
                         : 'bg-[#071A12]/70 text-[var(--ink-sage)] border border-[var(--chalk-line)]'
@@ -183,7 +261,7 @@ export function PlayerDrawTab({
                     {selectedPlayer.role === 'gk' ? 'Goleiro' : 'Linha'}
                   </span>
                   {selectedPlayer.isGuest && (
-                    <span className="rounded-md px-2 py-0.5 text-xs font-medium bg-sky-500/15 text-sky-200 border border-sky-400/25">
+                    <span className="rounded-md px-1.5 sm:px-2 py-0.5 text-[11px] sm:text-xs font-medium bg-sky-500/15 text-sky-200 border border-sky-400/25">
                       Convidado
                     </span>
                   )}
@@ -200,25 +278,25 @@ export function PlayerDrawTab({
               onClick={() => {
                 if (!isDrawing) onSelectPlayer(null);
               }}
-              className="tappable hover-surface h-9 px-3 rounded-lg border border-[var(--chalk-line)] bg-[#071A12]/70 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ink-sage)] disabled:opacity-45 disabled:cursor-not-allowed"
+              className="tappable hover-surface h-8 sm:h-9 px-2.5 sm:px-3 rounded-lg border border-[var(--chalk-line)] bg-[#071A12]/70 inline-flex items-center gap-1 text-[11px] sm:text-xs font-semibold text-[var(--ink-sage)] shrink-0 disabled:opacity-45 disabled:cursor-not-allowed"
             >
               <ArrowLeftRight className="w-3.5 h-3.5" />
-              Trocar jogador
+              <span>Trocar jogador</span>
             </button>
           </div>
 
           {/* Draw Stage OR Revealed Team Card */}
-          {isDrawing || !selectedPlayer.revealed || !assignedTeam ? (
+          {isDrawing || !isSelectedRevealed || !assignedTeam ? (
             <div
-              className="relative px-5 pt-6 pb-8 sm:pt-7 sm:pb-10 text-center overflow-hidden"
+              className="relative px-3.5 pt-4 pb-6 sm:px-5 sm:pt-8 sm:pb-10 text-center overflow-hidden border-t border-[var(--chalk-line)]"
               style={{
                 backgroundImage:
-                  'radial-gradient(ellipse 72% 52% at 50% 24%, rgba(234, 179, 8, 0.16), rgba(16, 185, 129, 0.09) 48%, transparent 78%)'
+                  'radial-gradient(ellipse 74% 56% at 50% 22%, rgba(234, 179, 8, 0.2), rgba(16, 185, 129, 0.11) 48%, transparent 78%), radial-gradient(circle at 50% 100%, rgba(6, 22, 15, 0.65), transparent 62%)'
               }}
             >
               <div className="relative z-10 flex flex-col items-center">
                 {/* Dedicated upper orb stage */}
-                <div className="relative w-full max-w-md h-44 sm:h-48 flex items-center justify-center">
+                <div className="relative w-full max-w-md h-36 sm:h-52 flex items-center justify-center">
                   <svg
                     aria-hidden="true"
                     viewBox="0 0 400 180"
@@ -236,25 +314,65 @@ export function PlayerDrawTab({
                     <circle cx="200" cy="90" r="3" fill="#F5F2E8" />
                   </svg>
 
+                  {/* Outer spinning radar aura when drawing */}
+                  {isDrawing && (
+                    <div
+                      aria-hidden="true"
+                      className="orb-radar pointer-events-none absolute w-36 h-36 sm:w-48 sm:h-48 rounded-full"
+                      style={{
+                        background: previewTeam
+                          ? `conic-gradient(from 0deg, transparent 0%, ${previewTeam.color} 50%, transparent 100%)`
+                          : 'conic-gradient(from 0deg, transparent 0%, rgba(234, 179, 8, 0.8) 50%, transparent 100%)',
+                        filter: 'blur(3px)',
+                        opacity: 0.75
+                      }}
+                    />
+                  )}
+
                   {/* Draw Capsule / Bolinha */}
                   <div
-                    className={`relative z-10 w-36 h-36 sm:w-40 sm:h-40 rounded-full border-2 flex flex-col items-center justify-center transition-colors ${
+                    role={!isDrawing && !isBlockedDoubt && !isLockedByDevice ? 'button' : undefined}
+                    tabIndex={!isDrawing && !isBlockedDoubt && !isLockedByDevice ? 0 : undefined}
+                    onClick={() => {
+                      if (!isDrawing && !isBlockedDoubt && !isLockedByDevice) {
+                        setErrorMsg(null);
+                        setConfirmingPlayerId(selectedPlayer.id);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if ((e.key === 'Enter' || e.key === ' ') && !isDrawing && !isBlockedDoubt && !isLockedByDevice) {
+                        e.preventDefault();
+                        setErrorMsg(null);
+                        setConfirmingPlayerId(selectedPlayer.id);
+                      }
+                    }}
+                    title={!isDrawing ? 'Toque para tirar bolinha' : undefined}
+                    aria-label={!isDrawing ? `Tirar bolinha para ${selectedPlayer.name}` : 'Sorteando time'}
+                    className={`relative z-10 w-28 h-28 sm:w-40 sm:h-40 rounded-full border-2 flex flex-col items-center justify-center transition-all duration-200 select-none ${
                       isDrawing
                         ? 'orb-drawing border-[var(--gold-trophy)] bg-[#0A251A]'
-                        : 'orb-idle border-[var(--gold-trophy)]/75 bg-gradient-to-b from-[#164230] to-[#081F15]'
+                        : 'orb-idle cursor-pointer border-[var(--gold-trophy)]/75 bg-gradient-to-b from-[#164230] to-[#081F15] hover:scale-105 hover:border-[var(--gold-trophy)] active:scale-95 shadow-[0_0_24px_rgba(234,179,8,0.22)]'
                     }`}
+                    style={
+                      isDrawing && previewTeam
+                        ? {
+                            borderColor: previewTeam.borderColor,
+                            boxShadow: `0 0 32px ${previewTeam.color}66, inset 0 0 20px ${previewTeam.color}44`
+                          }
+                        : undefined
+                    }
                   >
                     {isDrawing && previewTeam ? (
-                      <div className="flex flex-col items-center gap-1.5">
-                        <VestBadge team={previewTeam} size="lg" />
-                        <span className="font-display text-lg font-bold uppercase text-[var(--ink-chalk)]">
+                      <div className="flex flex-col items-center gap-1 sm:gap-1.5 animate-pulse">
+                        <VestBadge team={previewTeam} size="md" />
+                        <span className="font-display text-base sm:text-xl font-extrabold uppercase tracking-wider text-[var(--ink-chalk)] drop-shadow">
                           {previewTeam.shortName}
                         </span>
                       </div>
                     ) : (
-                      <div className="flex flex-col items-center gap-1.5">
-                        <TiraTimeCrest className="w-16 h-16" />
-                        <span className="text-xs font-semibold text-[var(--gold-trophy)]">
+                      <div className="flex flex-col items-center gap-1 sm:gap-1.5">
+                        <TiraTimeCrest className="w-11 h-11 sm:w-16 sm:h-16" />
+                        <span className="text-[11px] sm:text-xs font-bold text-[var(--gold-trophy)] tracking-wide">
                           Tirar time
                         </span>
                       </div>
@@ -262,40 +380,75 @@ export function PlayerDrawTab({
                   </div>
                 </div>
 
-                <h3 className="mt-4 font-display text-2xl sm:text-3xl font-bold uppercase text-[var(--ink-chalk)]">
-                  {isDrawing
-                    ? 'Girando a urna e sorteando seu time...'
-                    : isBlockedDoubt
-                      ? 'Presença em dúvida'
-                      : 'Tire sua bolinha da urna'}
+                {/* Status headings */}
+                <h3 className="mt-2.5 sm:mt-3 font-display text-xl sm:text-3xl font-bold uppercase text-[var(--ink-chalk)] tracking-tight">
+                  {isDrawing ? (
+                    drawStage === 'shuffling'
+                      ? 'Girando a urna de coletes...'
+                      : drawStage === 'picking'
+                        ? `Sorteando time de ${selectedPlayer.name}...`
+                        : 'Abrindo sua bolinha...'
+                  ) : isBlockedDoubt ? (
+                    'Presença em dúvida'
+                  ) : (
+                    'Tire sua bolinha da urna'
+                  )}
                 </h3>
 
-                <p className="mt-2 max-w-[48ch] text-sm text-[var(--ink-sage)] leading-relaxed">
-                  {isDrawing
-                    ? `Separando os times (${match.teams[0]?.outfieldCap ?? 6} na linha e 1 no gol) no TiraTime.`
-                    : isBlockedDoubt
-                      ? `Você está marcado como dúvida${selectedPlayer.note ? ` (${selectedPlayer.note})` : ''}. Assim que o organizador confirmar você na lista, o sorteio libera.`
-                      : 'Toque no botão abaixo para tirar sua bolinha da urna e descobrir em qual time você caiu hoje.'}
+                <p className="mt-1 sm:mt-1.5 max-w-[42ch] text-xs sm:text-sm text-[var(--ink-sage)] leading-relaxed">
+                  {isDrawing ? (
+                    match.balanceGk
+                      ? `Separando os times (${match.teams[0]?.outfieldCap ?? 6} na linha e 1 no gol) com equilíbrio.`
+                      : `Separando os times (${match.teams[0]?.outfieldCap ?? 6} por time, tudo junto) com equilíbrio.`
+                  ) : isBlockedDoubt ? (
+                    `Você está marcado como dúvida${selectedPlayer.note ? ` (${selectedPlayer.note})` : ''}. Assim que o organizador confirmar você na lista, o sorteio libera.`
+                  ) : (
+                    'Toque na bolinha ou no botão abaixo para tirar sua bolinha da urna e descobrir seu time hoje.'
+                  )}
                 </p>
+
+                {isLockedByDevice && activeDeviceLock && (
+                  <div
+                    role="alert"
+                    className="mt-3 sm:mt-4 max-w-md rounded-xl border border-amber-400/35 bg-amber-950/60 px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-amber-100 text-left space-y-2"
+                  >
+                    <div className="flex items-start gap-2">
+                      <Shield className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+                      <span>
+                        Trava ativa neste aparelho: você já tirou o time de{' '}
+                        <strong className="text-white">{activeDeviceLock.name}</strong>.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onSelectPlayer(activeDeviceLock.id)}
+                      className="tappable h-8 px-3 rounded-lg border border-amber-300/35 bg-[#071A12]/70 text-xs font-semibold text-amber-100 hover:bg-[#071A12]"
+                    >
+                      Voltar para {activeDeviceLock.name}
+                    </button>
+                  </div>
+                )}
 
                 {errorMsg && (
                   <div
                     role="alert"
-                    className="mt-4 max-w-md rounded-xl border border-amber-400/35 bg-amber-950/60 px-4 py-3 text-sm text-amber-100 flex items-start gap-2.5 text-left"
+                    className="mt-3 sm:mt-4 max-w-md rounded-xl border border-amber-400/35 bg-amber-950/60 px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-amber-100 flex items-start gap-2 text-left"
                   >
                     <AlertCircle className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
                     <span>{errorMsg}</span>
                   </div>
                 )}
 
-                <div className="mt-6 flex flex-col sm:flex-row items-center gap-3 w-full max-w-xs sm:max-w-md justify-center">
+                <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row items-center gap-3 w-full max-w-xs sm:max-w-md justify-center">
                   <button
                     type="button"
-                    disabled={isDrawing || isBlockedDoubt}
-                    onClick={handleDrawReveal}
-                    className="tappable hover-gold w-full sm:w-auto min-w-[240px] h-12 px-6 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-base inline-flex items-center justify-center gap-2 disabled:bg-[#103022] disabled:text-[var(--ink-sage)] disabled:border disabled:border-[var(--chalk-line)] disabled:cursor-not-allowed"
+                    disabled={isDrawing || isBlockedDoubt || isLockedByDevice}
+                    onClick={() => {
+                      setErrorMsg(null);
+                      setConfirmingPlayerId(selectedPlayer.id);
+                    }}
+                    className="btn-gold tappable w-full sm:w-auto min-w-[240px] h-12 px-6 rounded-xl text-base font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-lg disabled:bg-[#103022] disabled:text-[var(--ink-sage)] disabled:border disabled:border-[var(--chalk-line)] disabled:cursor-not-allowed disabled:shadow-none"
                   >
-                    <Sparkles className="w-5 h-5" />
                     {isDrawing ? 'Sorteando...' : 'Tirar Bolinha da Urna'}
                   </button>
                 </div>
@@ -303,36 +456,67 @@ export function PlayerDrawTab({
             </div>
           ) : (
             /* Simple Revealed Team Card — full team formation suspense stays in the Times tab */
-            <div className="card-reveal p-5 sm:p-6">
+            <div className="card-reveal p-4 sm:p-6 space-y-3.5 sm:space-y-4">
               <div
-                className="rounded-xl p-5 border flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                className="rounded-2xl p-4 sm:p-6 border flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 sm:gap-4 shadow-xl"
                 style={{
                   backgroundColor: assignedTeam.color,
                   color: assignedTeam.textColor,
                   borderColor: assignedTeam.borderColor
                 }}
               >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-14 h-14 rounded-xl bg-[#071A12] border border-white/15 flex items-center justify-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-[#071A12] border border-white/20 flex items-center justify-center shrink-0 shadow-md">
                     <VestBadge team={assignedTeam} size="lg" />
                   </div>
-                  <div>
-                    <h3 className="font-display text-3xl sm:text-4xl font-extrabold uppercase leading-none">
+                  <div className="min-w-0">
+                    <span className="text-[11px] font-bold uppercase tracking-wider opacity-85 block mb-0.5">
+                      Sua escalação oficial
+                    </span>
+                    <h3 className="font-display text-2xl sm:text-4xl font-extrabold uppercase leading-none truncate">
                       {assignedTeam.name}
                     </h3>
-                    <p className="text-sm font-semibold opacity-90 mt-1">
-                      Você está escalado no {assignedTeam.name} hoje!
+                    <p className="text-xs sm:text-sm font-semibold opacity-95 mt-1">
+                      {selectedPlayer.name}, você joga no {assignedTeam.name} hoje!
                     </p>
                   </div>
                 </div>
 
-                <div className="inline-flex items-center gap-1.5 rounded-lg bg-black/15 px-3 py-1.5 text-sm font-bold self-start sm:self-center">
+                <div className="inline-flex items-center gap-1.5 rounded-lg bg-black/20 px-3 py-1.5 text-xs sm:text-sm font-bold self-start sm:self-center shadow-inner shrink-0">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{selectedPlayer.role === 'gk' ? 'Goleiro do Time' : 'Jogador de Linha'}</span>
                 </div>
               </div>
 
-              <div className="mt-5 pt-4 border-t border-[var(--chalk-line)] flex flex-wrap items-center justify-between gap-3">
+              {/* Teammates preview for social excitement */}
+              {revealedResult?.teammates && revealedResult.teammates.length > 0 ? (
+                <div className="rounded-xl pitch-inset border border-[var(--chalk-line)] p-3 sm:p-3.5 text-left space-y-2">
+                  <div className="flex items-center justify-between text-xs font-semibold text-[var(--ink-sage)]">
+                    <span>Colegas já sorteados no {assignedTeam.name}:</span>
+                    <span className="font-mono text-[var(--gold-trophy)]">{revealedResult.teammates.length} atletas</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {revealedResult.teammates.map((tm) => (
+                      <span
+                        key={tm.id}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold bg-[#071A12]/85 border border-[var(--chalk-line)] text-[var(--ink-chalk)]"
+                      >
+                        <span className="font-mono text-[var(--gold-trophy)]">#{tm.listNumber ?? '•'}</span>
+                        <span>{tm.name}</span>
+                        {tm.role === 'gk' && (
+                          <span className="text-[10px] text-amber-300 font-semibold">(GOL)</span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl pitch-inset border border-[var(--chalk-line)] p-3 text-center text-xs text-[var(--ink-sage)]">
+                  Você é o 1º atleta sorteado para o <strong className="text-[var(--ink-chalk)]">{assignedTeam.name}</strong>! Seus companheiros vão aparecendo aqui conforme tiram a bolinha.
+                </div>
+              )}
+
+              <div className="pt-2 border-t border-[var(--chalk-line)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 {match.meta.feeAmount > 0 ? (
                   <div className="text-xs text-[var(--ink-sage)]">
                     Pagamento:{' '}
@@ -352,18 +536,102 @@ export function PlayerDrawTab({
                   <div />
                 )}
 
-                <button
-                  type="button"
-                  onClick={onGoToTeams}
-                  className="tappable hover-gold h-10 px-4 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm inline-flex items-center gap-2"
-                >
-                  <Users className="w-4 h-4" />
-                  Ver Times se Formando
-                </button>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const shareText = `⚽ Tirei minha bolinha no TiraTime e caí no *${assignedTeam.name}*! Bora pro jogo!`;
+                      navigator.clipboard.writeText(shareText).catch(() => {});
+                      setCopiedTeam(true);
+                      setTimeout(() => setCopiedTeam(false), 2000);
+                    }}
+                    className="tappable hover-surface h-11 px-3.5 rounded-xl border border-[var(--chalk-line)] bg-[#071A12]/80 text-xs font-semibold text-[var(--ink-chalk)] inline-flex items-center justify-center gap-1.5"
+                  >
+                    {copiedTeam ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-[var(--gold-trophy)]" />}
+                    <span>{copiedTeam ? 'Copiado p/ WhatsApp!' : 'Copiar meu time'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onGoToTeams}
+                    className="tappable hover-gold h-11 px-4 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm inline-flex items-center justify-center gap-2"
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>Ver Prancheta</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
         </div>
+
+        {/* Mobile Bottom Sheet / Centered Modal Confirmation */}
+        {isConfirmingIdentity && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-player-title"
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setConfirmingPlayerId(null)}
+          >
+            <div
+              className="bottom-sheet-slide w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border-t sm:border border-[var(--gold-trophy)]/40 bg-gradient-to-b from-[#0B251B] to-[#04120C] p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:p-6 text-center shadow-[0_-12px_40px_rgba(0,0,0,0.7)] sm:shadow-2xl space-y-3.5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Mobile handle pull bar */}
+              <div className="w-10 h-1 rounded-full bg-white/20 mx-auto -mt-1 mb-1 sm:hidden" />
+
+              {/* Icon badge */}
+              <div className="w-12 h-12 rounded-full bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/40 text-[var(--gold-trophy)] flex items-center justify-center mx-auto shadow-[0_0_18px_rgba(234,179,8,0.25)]">
+                <UserCheck className="w-6 h-6" aria-hidden="true" />
+              </div>
+
+              {/* Selected player tag */}
+              <div className="inline-flex items-center gap-2 rounded-full bg-[#020B07] border border-[var(--chalk-line)] px-3.5 py-1 text-xs">
+                <span className="font-mono font-bold text-[var(--gold-trophy)]">
+                  #{selectedPlayer.listNumber ?? '•'}
+                </span>
+                <span className="font-bold text-[var(--ink-chalk)]">{selectedPlayer.name}</span>
+                <span className="text-[var(--ink-sage)]">
+                  · {selectedPlayer.role === 'gk' ? 'Goleiro' : 'Linha'}
+                </span>
+              </div>
+
+              <div>
+                <h4
+                  id="confirm-player-title"
+                  className="font-display text-2xl sm:text-3xl font-bold uppercase tracking-tight text-[var(--ink-chalk)]"
+                >
+                  Você é o {selectedPlayer.name}?
+                </h4>
+                <p className="mt-1 text-xs sm:text-sm text-[var(--ink-sage)] leading-relaxed max-w-[34ch] mx-auto">
+                  Confirme para tirar sua bolinha da urna nesta rodada.
+                </p>
+              </div>
+
+              {/* Action Buttons in thumb zone */}
+              <div className="pt-2 flex flex-col gap-2.5 w-full">
+                <button
+                  type="button"
+                  onClick={handleDrawReveal}
+                  className="btn-gold tappable w-full h-12 sm:h-13 rounded-xl text-base font-bold inline-flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+                >
+                  Sim, sou eu · Tirar Bolinha
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmingPlayerId(null);
+                    onSelectPlayer(null);
+                  }}
+                  className="tappable hover-surface w-full h-11 rounded-xl border border-[var(--chalk-line)] bg-[#071A12]/80 text-xs font-semibold text-[var(--ink-sage)] hover:text-white cursor-pointer"
+                >
+                  Não sou eu (trocar de jogador)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     );
   }
@@ -371,14 +639,16 @@ export function PlayerDrawTab({
   // Initial Screen: Simple, clean Player List to pick your own name
   return (
     <section className="max-w-5xl mx-auto px-4 py-5 space-y-5">
-      <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-4 sm:p-5">
+      <div className="rounded-2xl panel-hero border border-[var(--chalk-line)] p-4 sm:p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-2xl sm:text-3xl font-bold uppercase text-[var(--ink-chalk)]">
               Quem é você na lista?
             </h2>
             <p className="text-sm text-[var(--ink-sage)] mt-0.5">
-              Toque no seu nome abaixo para tirar sua bolinha na urna e descobrir seu time.
+              {match.revealAllPublic
+                ? 'As vagas foram preenchidas automaticamente! Confira seu time ao lado do seu nome.'
+                : 'Toque no seu nome abaixo para tirar sua bolinha na urna e descobrir seu time.'}
             </p>
           </div>
 
@@ -429,13 +699,32 @@ export function PlayerDrawTab({
             </button>
           )}
         </div>
+
+        {activeDeviceLock && (
+          <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-950/45 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-100">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-amber-300 shrink-0" aria-hidden="true" />
+              <span>
+                Trava por celular ativa: você já tirou o time de{' '}
+                <strong className="text-white">{activeDeviceLock.name}</strong>.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onSelectPlayer(activeDeviceLock.id)}
+              className="tappable h-7 px-2.5 rounded-lg border border-amber-300/35 bg-[#071A12]/70 text-[11px] font-bold text-amber-100 hover:bg-[#071A12]"
+            >
+              Ver meu time
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Outfield Players */}
       <div>
         <div className="flex items-center justify-between mb-2.5 px-1">
           <h3 className="font-display text-xl font-bold uppercase text-[var(--ink-chalk)]">
-            Jogadores de Linha
+            {match.balanceGk ? 'Jogadores de Linha' : 'Jogadores da Lista'}
           </h3>
           <span className="text-xs font-semibold text-[var(--ink-sage)] tabular-nums">
             {outfieldPlayers.length} na lista
@@ -450,6 +739,7 @@ export function PlayerDrawTab({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
             {outfieldPlayers.map((player) => {
               const team = player.teamId ? teamById.get(player.teamId) : undefined;
+              const isRevealed = Boolean((player.revealed || match.revealAllPublic) && team);
               const isDoubt = player.status === 'doubt' && !match.includeDoubts && !player.teamId;
 
               return (
@@ -475,7 +765,7 @@ export function PlayerDrawTab({
                     </div>
                   </div>
 
-                  {player.revealed && team ? (
+                  {isRevealed && team ? (
                     <span
                       className="shrink-0 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold border"
                       style={{
@@ -484,7 +774,7 @@ export function PlayerDrawTab({
                         borderColor: team.borderColor
                       }}
                     >
-                      {team.shortName}
+                      {team.name}
                     </span>
                   ) : isDoubt ? (
                     <span className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold bg-amber-500/15 text-amber-200 border border-amber-400/30">
@@ -518,6 +808,9 @@ export function PlayerDrawTab({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             {goalkeepers.map((gk) => {
               const team = gk.teamId ? teamById.get(gk.teamId) : undefined;
+              const isRevealed = Boolean((gk.revealed || match.revealAllPublic) && team);
+              const isDoubt = gk.status === 'doubt' && !match.includeDoubts && !gk.teamId;
+
               return (
                 <button
                   key={gk.id}
@@ -537,7 +830,7 @@ export function PlayerDrawTab({
                     </div>
                   </div>
 
-                  {gk.revealed && team ? (
+                  {isRevealed && team ? (
                     <span
                       className="shrink-0 inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-bold border"
                       style={{
@@ -546,7 +839,11 @@ export function PlayerDrawTab({
                         borderColor: team.borderColor
                       }}
                     >
-                      {team.shortName}
+                      {team.name}
+                    </span>
+                  ) : isDoubt ? (
+                    <span className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold bg-amber-500/15 text-amber-200 border border-amber-400/30">
+                      Dúvida
                     </span>
                   ) : (
                     <span className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold bg-[var(--gold-trophy)]/15 text-[var(--gold-trophy)] border border-[var(--gold-trophy)]/35">

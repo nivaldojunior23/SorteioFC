@@ -109,7 +109,7 @@ export async function updateMatchSettings(
 
 export async function executeDraw(
   slug: string,
-  action: 'run_full_draw' | 'draw_and_reveal' | 'open_live_urn' | 'reveal_all' | 'hide_all',
+  action: 'run_full_draw' | 'draw_and_reveal' | 'open_live_urn' | 'reveal_all' | 'hide_all' | 'reset_week',
   auth?: AdminAuth
 ): Promise<MatchState> {
   const data = await requestJson<{ match: MatchState }>(
@@ -169,6 +169,16 @@ export async function fetchWhatsAppExport(slug: string, auth?: AdminAuth): Promi
     { headers: authHeaders(auth) }
   );
   return data.text;
+}
+
+export async function deleteMatch(slug: string, auth?: AdminAuth): Promise<void> {
+  await requestJson<{ ok: boolean }>(
+    `/api/matches/${encodeURIComponent(slug)}`,
+    {
+      method: 'DELETE',
+      headers: authHeaders(auth)
+    }
+  );
 }
 
 // Lightweight Web Audio API cues (zero external media files, muted safely on error)

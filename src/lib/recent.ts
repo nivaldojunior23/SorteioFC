@@ -42,6 +42,40 @@ export function forgetMatch(slug: string) {
   window.localStorage.setItem(KEY, JSON.stringify(updated));
   window.localStorage.removeItem(`tiratime:admin:${slug}`);
   window.localStorage.removeItem(`tiratime:player:${slug}`);
+  window.localStorage.removeItem(`tiratime:device-lock:${slug}`);
+}
+
+export interface DeviceDrawLock {
+  playerId: string;
+  playerName: string;
+}
+
+export function getDeviceDrawLock(slug: string): DeviceDrawLock | null {
+  try {
+    const raw = window.localStorage.getItem(`tiratime:device-lock:${slug}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.playerId === 'string') {
+      return {
+        playerId: parsed.playerId,
+        playerName: typeof parsed.playerName === 'string' ? parsed.playerName : ''
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveDeviceDrawLock(slug: string, playerId: string, playerName: string) {
+  try {
+    window.localStorage.setItem(
+      `tiratime:device-lock:${slug}`,
+      JSON.stringify({ playerId, playerName })
+    );
+  } catch {
+    // ignore quota errors
+  }
 }
 
 /** Accepts a room code ("pelada-do-ze-k7m2") or a full shared link ("https://.../?pelada=..."). */

@@ -6,7 +6,7 @@ import { TeamsBoardTab } from './components/TeamsBoardTab';
 import { OrganizerTab } from './components/OrganizerTab';
 import { HomeScreen } from './components/HomeScreen';
 import { fetchMatch, type AdminAuth } from './lib/api';
-import { rememberMatch } from './lib/recent';
+import { forgetMatch, rememberMatch } from './lib/recent';
 import type { MatchState } from './types';
 
 function readUrlContext() {
@@ -156,7 +156,14 @@ export function App() {
             setMatch(latest);
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          if (closed) return;
+          const msg = err instanceof Error ? err.message : '';
+          if (/não encontrad/i.test(msg)) {
+            forgetMatch(slug);
+            goHome('Essa pelada foi excluída pelo organizador.');
+          }
+        });
     };
 
     const es = new EventSource(`/api/matches/${encodeURIComponent(slug)}/events`);
@@ -170,6 +177,11 @@ export function App() {
     });
     es.addEventListener('match_updated', syncLatest);
     es.addEventListener('player_revealed', syncLatest);
+    es.addEventListener('match_deleted', () => {
+      if (closed) return;
+      forgetMatch(slug);
+      goHome('Essa pelada foi excluída pelo organizador.');
+    });
     es.onerror = () => es.close();
 
     const pollInterval = window.setInterval(syncLatest, 4000);
@@ -184,7 +196,7 @@ export function App() {
       document.removeEventListener('visibilitychange', handleVisibility);
       es.close();
     };
-  }, [slug, adminAuth]);
+  }, [slug, adminAuth, goHome]);
 
   const handleSelectPlayer = (playerId: string | null) => {
     if (!slug) return;
@@ -241,8 +253,11 @@ export function App() {
   if (loading || !match) {
     return (
       <main className="min-h-[100dvh] flex flex-col items-center justify-center px-4 text-center">
-        <div className="w-12 h-12 rounded-full border-2 border-[var(--gold-trophy)] border-t-transparent animate-spin" />
-        <p className="mt-4 text-sm font-medium text-[var(--ink-sage)]">Carregando vestiário do TiraTime...</p>
+        <div className="relative flex items-center justify-center">
+          <div className="absolute -inset-3 rounded-full bg-[var(--gold-trophy)]/12 blur-md" aria-hidden="true" />
+          <div className="relative w-12 h-12 rounded-full border-2 border-[var(--gold-trophy)] border-t-transparent animate-spin" />
+        </div>
+        <p className="mt-4 text-sm font-medium text-[var(--ink-sage)]">Carregando vestiário do TiraTime…</p>
       </main>
     );
   }
@@ -311,7 +326,7 @@ function Toast({ message }: { message: string }) {
     <div
       role="status"
       aria-live="polite"
-      className="toast-slide fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 max-w-[92vw] rounded-xl border border-[var(--gold-trophy)]/40 bg-[#0A251A]/95 backdrop-blur-md px-4 py-2.5 text-sm font-semibold text-[var(--ink-chalk)] shadow-2xl"
+      className="toast-slide fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 max-w-[92vw] rounded-xl border border-[var(--gold-trophy)]/45 bg-[#081F15]/95 backdrop-blur-md px-4 py-2.5 text-sm font-semibold text-[var(--ink-chalk)] shadow-[0_16px_38px_-10px_rgba(0,0,0,0.85)]"
     >
       {message}
     </div>
@@ -321,14 +336,14 @@ function Toast({ message }: { message: string }) {
 function EmptyRosterNotice({ isAdmin, onGoToAdmin }: { isAdmin: boolean; onGoToAdmin: () => void }) {
   return (
     <section className="max-w-md mx-auto px-4 py-10">
-      <div className="rounded-2xl border border-[var(--chalk-line)] bg-[var(--bg-locker)] p-6 text-center">
-        <div className="mx-auto w-12 h-12 rounded-xl bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/35 flex items-center justify-center text-[var(--gold-trophy)]">
-          {isAdmin ? <ClipboardList className="w-6 h-6" /> : <Hourglass className="w-6 h-6" />}
+      <div className="rounded-2xl panel-hero border border-[var(--chalk-line)] p-6 sm:p-7 text-center">
+        <div className="mx-auto w-12 h-12 rounded-xl bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/40 shadow-[inset_0_1px_0_rgba(255,253,240,0.2)] flex items-center justify-center text-[var(--gold-trophy)]">
+          {isAdmin ? <ClipboardList className="w-6 h-6" aria-hidden="true" /> : <Hourglass className="w-6 h-6" aria-hidden="true" />}
         </div>
         <h2 className="mt-4 font-display text-2xl font-bold uppercase text-[var(--ink-chalk)]">
           A lista ainda está vazia
         </h2>
-        <p className="mt-1.5 text-sm text-[var(--ink-sage)]">
+        <p className="mt-1.5 text-sm leading-relaxed text-[var(--ink-sage)]">
           {isAdmin
             ? 'Cole a lista do WhatsApp ou adicione os jogadores no painel do organizador para liberar o sorteio.'
             : 'O organizador ainda não montou a lista desta pelada. Volte daqui a pouco!'}
@@ -338,8 +353,8 @@ function EmptyRosterNotice({ isAdmin, onGoToAdmin }: { isAdmin: boolean; onGoToA
           onClick={onGoToAdmin}
           className={
             isAdmin
-              ? 'tappable hover-gold mt-5 h-11 px-5 rounded-xl bg-[var(--gold-trophy)] text-[#071A12] font-bold text-sm'
-              : 'tappable hover-surface mt-5 h-10 px-4 rounded-xl border border-[var(--chalk-line)] bg-[#071A12] text-xs font-semibold text-[var(--gold-trophy)]'
+              ? 'tappable hover-gold btn-gold mt-5 h-11 px-5 rounded-xl bg-[var(--gold-trophy)] text-[#06160F] font-bold text-sm'
+              : 'tappable hover-surface mt-5 h-10 px-4 rounded-xl border border-[var(--chalk-line)] pitch-inset text-xs font-semibold text-[var(--gold-trophy)]'
           }
         >
           {isAdmin ? 'Montar a lista agora' : 'Sou o organizador · Montar lista'}

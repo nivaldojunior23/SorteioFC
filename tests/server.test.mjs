@@ -177,7 +177,7 @@ test('HTTP API supports room creation (empty), public anti-spoiler flow, admin i
     const { match: matchWithCap4 } = await setLineCapRes.json();
     assert.ok(matchWithCap4.teams.every((t) => t.outfieldCap === 4), 'All teams must have outfieldCap = 4');
 
-    // 8. Full draw with cap 4 puts exactly 4 outfielders per team
+    // 8. Full draw distributes all confirmed players across the teams and reveals them
     const drawCap4Res = await fetch(`${baseUrl}/api/matches/${slug}/draw`, {
       method: 'POST',
       headers: {
@@ -191,8 +191,12 @@ test('HTTP API supports room creation (empty), public anti-spoiler flow, admin i
     for (const team of drawnCap4.teams) {
       const roster = drawnCap4.players.filter((p) => p.teamId === team.id);
       const outfields = roster.filter((p) => p.role !== 'gk');
-      assert.equal(outfields.length, 4, `Team ${team.name} must strictly have 4 outfielders`);
+      assert.ok(outfields.length >= 5 && outfields.length <= 6, `Team ${team.name} must receive balanced outfielders`);
     }
+    assert.ok(
+      drawnCap4.players.filter((p) => p.status === 'confirmed').every((p) => p.teamId !== null && p.revealed === true),
+      'All confirmed players must be assigned to a team and revealed'
+    );
   } finally {
     await new Promise((resolve) => server.close(resolve));
     store.close();
@@ -240,21 +244,11 @@ test('Vercel serverless handler (api/index.mjs) and VERCEL=1 mode work cleanly',
   }
 });
 
-test('PostgresStore persists rooms, players, auth, settings and live urn draws via SQL pool', async () => {
+async function createSqlitePgMock(legacySetupSql = '') {
   const { DatabaseSync } = await import('node:sqlite');
-  const { PostgresStore, buildPoolConfig } = await import('../lib/pg-store.mjs');
-
-  const neonCfg = buildPoolConfig('postgresql://user:pass@ep-cool-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require');
-  assert.match(neonCfg.connectionString, /sslmode=verify-full/);
-
-  const localCfg = buildPoolConfig('postgres://postgres:postgres@localhost:5432/tiratime?sslmode=disable');
-  assert.equal(localCfg.ssl, false);
-
-  const otherCfg = buildPoolConfig('postgresql://user:pass@db.example.com:5432/tiratime?sslmode=require');
-  assert.deepEqual(otherCfg.ssl, { rejectUnauthorized: false });
-
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON;');
+  if (legacySetupSql) sqlite.exec(legacySetupSql);
 
   const runSql = (sqlText, params = []) => {
     const trimmed = sqlText.trim();
@@ -268,8 +262,8 @@ test('PostgresStore persists rooms, players, auth, settings and live urn draws v
     }
 
     const flatParams = [];
-    let normalized = trimmed.replace(/\bFOR UPDATE\b/gi, '');
-    normalized = normalized.replace(/ANY\(\$(\d+)::text\[\]\)/gi, (_m, idxStr) => {
+    let normalized = trimmed.replace(/\bFOR UPDATE\b/gi, '').replace(/::(int|text)/gi, '');
+    normalized = normalized.replace(/ANY\(\$(\d+)(\[\])?\)/gi, (_m, idxStr) => {
       const arr = params[Number(idxStr) - 1] || [];
       return `(${arr.map((val) => {
         flatParams.push(val);
@@ -291,22 +285,40 @@ test('PostgresStore persists rooms, players, auth, settings and live urn draws v
     return { rows: [], rowCount: info.changes };
   };
 
-  const mockPool = {
-    async query(sql, params) {
-      return runSql(sql, params);
-    },
-    async connect() {
-      return {
-        async query(sql, params) {
-          return runSql(sql, params);
-        },
-        release() {}
-      };
-    },
-    async end() {
-      sqlite.close();
+  return {
+    sqlite,
+    pool: {
+      async query(sql, params) {
+        return runSql(sql, params);
+      },
+      async connect() {
+        return {
+          async query(sql, params) {
+            return runSql(sql, params);
+          },
+          release() {}
+        };
+      },
+      async end() {
+        sqlite.close();
+      }
     }
   };
+}
+
+test('PostgresStore persists rooms, players, auth, settings, reset_week and DELETE /api/matches/:slug via SQL pool', async () => {
+  const { PostgresStore, buildPoolConfig } = await import('../lib/pg-store.mjs');
+
+  const neonCfg = buildPoolConfig('postgresql://user:pass@ep-cool-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require');
+  assert.match(neonCfg.connectionString, /sslmode=verify-full/);
+
+  const localCfg = buildPoolConfig('postgres://postgres:postgres@localhost:5432/tiratime?sslmode=disable');
+  assert.equal(localCfg.ssl, false);
+
+  const otherCfg = buildPoolConfig('postgresql://user:pass@db.example.com:5432/tiratime?sslmode=require');
+  assert.deepEqual(otherCfg.ssl, { rejectUnauthorized: false });
+
+  const { pool: mockPool } = await createSqlitePgMock();
 
   const pgStore = new PostgresStore(mockPool);
   const { server } = createAppServer({ store: pgStore });
@@ -351,12 +363,18 @@ test('PostgresStore persists rooms, players, auth, settings and live urn draws v
     const patchRes = await fetch(`${baseUrl}/api/matches/${slug}/settings`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-admin-token': authJson.adminToken },
-      body: JSON.stringify({ groupName: 'Los Canoas FC', feeAmount: 15, adminPin: '4321' })
+      body: JSON.stringify({
+        groupName: 'Los Canoas FC',
+        feeAmount: 15,
+        adminPin: '4321',
+        lockOnePerDevice: true
+      })
     });
     assert.equal(patchRes.status, 200);
     const { match: updated } = await patchRes.json();
     assert.equal(updated.groupName, 'Los Canoas FC');
     assert.equal(updated.meta.feeAmount, 15);
+    assert.equal(updated.lockOnePerDevice, true);
 
     const newAuth = await fetch(`${baseUrl}/api/matches/${slug}/auth`, {
       method: 'POST',
@@ -393,8 +411,68 @@ test('PostgresStore persists rooms, players, auth, settings and live urn draws v
     assert.equal(updPlayerRes.status, 200);
     const updatedPlayerMatch = (await updPlayerRes.json()).match;
     assert.equal(updatedPlayerMatch.players.find((p) => p.id === nivaldo.id).paid, false);
+
+    // Reset week clears players, open slots, and team assignments
+    const resetRes = await fetch(`${baseUrl}/api/matches/${slug}/draw`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': newAuthJson.adminToken },
+      body: JSON.stringify({ action: 'reset_week' })
+    });
+    assert.equal(resetRes.status, 200);
+    const resetMatch = (await resetRes.json()).match;
+    assert.equal(resetMatch.players.length, 0);
+    assert.equal(resetMatch.openSlots.length, 0);
+    assert.equal(resetMatch.drawStatus, 'draft');
+
+    // DELETE requires valid admin auth
+    const unauthDel = await fetch(`${baseUrl}/api/matches/${slug}`, { method: 'DELETE' });
+    assert.equal(unauthDel.status, 401);
+
+    const delRes = await fetch(`${baseUrl}/api/matches/${slug}`, {
+      method: 'DELETE',
+      headers: { 'x-admin-token': newAuthJson.adminToken }
+    });
+    assert.equal(delRes.status, 200);
+    assert.equal((await delRes.json()).deleted, true);
+
+    const afterDelGet = await fetch(`${baseUrl}/api/matches/${slug}`);
+    assert.equal(afterDelGet.status, 404);
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    await pgStore.close();
+  }
+});
+
+test('PostgresStore safely runs incremental column migrations on legacy tables', async () => {
+  const { PostgresStore } = await import('../lib/pg-store.mjs');
+  const { pool } = await createSqlitePgMock(`
+    CREATE TABLE matches (
+      id TEXT PRIMARY KEY,
+      slug TEXT UNIQUE NOT NULL,
+      group_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      date_label TEXT NOT NULL,
+      time_label TEXT NOT NULL,
+      teams_json TEXT NOT NULL,
+      admin_pin TEXT NOT NULL,
+      admin_token TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE players (
+      id TEXT PRIMARY KEY,
+      match_id TEXT NOT NULL,
+      name TEXT NOT NULL
+    );
+  `);
+
+  const pgStore = new PostgresStore(pool);
+  try {
+    const created = await pgStore.createMatch({ groupName: 'Pelada Migrada', adminPin: '1234' });
+    assert.equal(created.lockOnePerDevice, false);
+    const toggled = await pgStore.updateSettings(created.slug, { lockOnePerDevice: true });
+    assert.equal(toggled.lockOnePerDevice, true);
+  } finally {
     await pgStore.close();
   }
 });
