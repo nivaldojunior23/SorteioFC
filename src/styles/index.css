@@ -154,7 +154,9 @@
 }
 
 .btn-gold {
+  background-color: var(--gold-trophy);
   background-image: linear-gradient(180deg, #facc15 0%, #eab308 100%);
+  color: #06160f !important;
   box-shadow: var(--shadow-gold);
 }
 
@@ -180,6 +182,7 @@
   .hover-gold:hover:not(:disabled) {
     background-color: var(--gold-bright);
     background-image: linear-gradient(180deg, #fde047 0%, #facc15 100%);
+    color: #06160f !important;
   }
 
   .hover-surface:hover:not(:disabled) {
@@ -198,33 +201,15 @@
   }
 }
 
-@keyframes orb-lottery-shuffle {
+@keyframes orb-3d-spin {
   0% {
-    transform: scale(1) translateY(0) rotate(0deg);
+    transform: perspective(1000px) rotateY(0deg) scale(1);
   }
-  12% {
-    transform: scale(1.06) translateY(-6px) rotate(-2.5deg);
-  }
-  24% {
-    transform: scale(0.96) translateY(5px) rotate(2.5deg);
-  }
-  36% {
-    transform: scale(1.08) translateY(-6px) rotate(-2deg);
-  }
-  48% {
-    transform: scale(0.95) translateY(4px) rotate(2deg);
-  }
-  62% {
-    transform: scale(1.06) translateY(-4px) rotate(-1.5deg);
-  }
-  76% {
-    transform: scale(0.98) translateY(3px) rotate(1.5deg);
-  }
-  88% {
-    transform: scale(1.04) translateY(-2px) rotate(-0.5deg);
+  50% {
+    transform: perspective(1000px) rotateY(720deg) scale(1.06);
   }
   100% {
-    transform: scale(1.06) translateY(0) rotate(0deg);
+    transform: perspective(1000px) rotateY(1440deg) scale(1.04);
   }
 }
 
@@ -286,7 +271,9 @@
 }
 
 .orb-drawing {
-  animation: orb-lottery-shuffle 3000ms cubic-bezier(0.34, 1.2, 0.4, 1) forwards;
+  animation: orb-3d-spin 3000ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  transform-style: preserve-3d;
+  will-change: transform;
 }
 
 .orb-radar {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeftRight,
+  Banknote,
   Check,
   CheckCircle2,
   Copy,
@@ -15,6 +16,12 @@ import { playDrawSpinCue, playRevealSuccessCue, revealPlayer } from '../lib/api'
 import { getDeviceDrawLock, saveDeviceDrawLock } from '../lib/recent';
 import type { MatchState, Player, TeamConfig } from '../types';
 import { TiraTimeCrest, VestBadge } from './TiraTimeCrest';
+
+function cleanPlayerDisplayName(name: string): string {
+  return name
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}]+\s*$/u, '')
+    .trim();
+}
 
 interface PlayerDrawTabProps {
   match: MatchState;
@@ -40,7 +47,6 @@ export function PlayerDrawTab({
   const [isDrawing, setIsDrawing] = useState(false);
   const [confirmingPlayerId, setConfirmingPlayerId] = useState<string | null>(null);
   const [cyclingIdx, setCyclingIdx] = useState(0);
-  const [drawStage, setDrawStage] = useState<'shuffling' | 'picking' | 'revealing'>('shuffling');
   const [copiedTeam, setCopiedTeam] = useState(false);
   const [revealedResult, setRevealedResult] = useState<{
     team: TeamConfig;
@@ -105,10 +111,7 @@ export function PlayerDrawTab({
 
   // Cycle team vest preview with progressive deceleration during the 3s draw animation
   useEffect(() => {
-    if (!isDrawing || match.teams.length === 0) {
-      setDrawStage('shuffling');
-      return;
-    }
+    if (!isDrawing || match.teams.length === 0) return;
     let cancelled = false;
     let timerId: number | undefined;
     const startedAt = Date.now();
@@ -117,28 +120,11 @@ export function PlayerDrawTab({
       if (cancelled) return;
       setCyclingIdx((prev) => (prev + 1) % match.teams.length);
       const elapsed = Date.now() - startedAt;
-
-      if (elapsed < 1100) {
-        setDrawStage('shuffling');
-      } else if (elapsed < 2200) {
-        setDrawStage('picking');
-      } else {
-        setDrawStage('revealing');
-      }
-
-      const delay =
-        elapsed < 900
-          ? 90
-          : elapsed < 1600
-            ? 140
-            : elapsed < 2300
-              ? 220
-              : 360;
-
+      const delay = elapsed < 1000 ? 110 : elapsed < 1800 ? 170 : elapsed < 2400 ? 260 : 380;
       timerId = window.setTimeout(step, delay);
     };
 
-    timerId = window.setTimeout(step, 90);
+    timerId = window.setTimeout(step, 110);
     return () => {
       cancelled = true;
       if (timerId !== undefined) window.clearTimeout(timerId);
@@ -350,22 +336,22 @@ export function PlayerDrawTab({
                     aria-label={!isDrawing ? `Tirar bolinha para ${selectedPlayer.name}` : 'Sorteando time'}
                     className={`relative z-10 w-28 h-28 sm:w-40 sm:h-40 rounded-full border-2 flex flex-col items-center justify-center transition-all duration-200 select-none ${
                       isDrawing
-                        ? 'orb-drawing border-[var(--gold-trophy)] bg-[#0A251A]'
+                        ? 'orb-drawing border-[var(--gold-trophy)] bg-gradient-to-b from-[#184834] via-[#0D2D20] to-[#05160E] shadow-[0_0_36px_rgba(234,179,8,0.4)]'
                         : 'orb-idle cursor-pointer border-[var(--gold-trophy)]/75 bg-gradient-to-b from-[#164230] to-[#081F15] hover:scale-105 hover:border-[var(--gold-trophy)] active:scale-95 shadow-[0_0_24px_rgba(234,179,8,0.22)]'
                     }`}
                     style={
                       isDrawing && previewTeam
                         ? {
                             borderColor: previewTeam.borderColor,
-                            boxShadow: `0 0 32px ${previewTeam.color}66, inset 0 0 20px ${previewTeam.color}44`
+                            boxShadow: `0 0 36px ${previewTeam.color}88, inset 0 0 20px ${previewTeam.color}55`
                           }
                         : undefined
                     }
                   >
                     {isDrawing && previewTeam ? (
-                      <div className="flex flex-col items-center gap-1 sm:gap-1.5 animate-pulse">
+                      <div className="flex flex-col items-center gap-1 sm:gap-1.5 [backface-visibility:visible]">
                         <VestBadge team={previewTeam} size="md" />
-                        <span className="font-display text-base sm:text-xl font-extrabold uppercase tracking-wider text-[var(--ink-chalk)] drop-shadow">
+                        <span className="font-display text-base sm:text-xl font-black uppercase tracking-wider text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
                           {previewTeam.shortName}
                         </span>
                       </div>
@@ -383,11 +369,7 @@ export function PlayerDrawTab({
                 {/* Status headings */}
                 <h3 className="mt-2.5 sm:mt-3 font-display text-xl sm:text-3xl font-bold uppercase text-[var(--ink-chalk)] tracking-tight">
                   {isDrawing ? (
-                    drawStage === 'shuffling'
-                      ? 'Girando a urna de coletes...'
-                      : drawStage === 'picking'
-                        ? `Sorteando time de ${selectedPlayer.name}...`
-                        : 'Abrindo sua bolinha...'
+                    `Sorteando time de ${cleanPlayerDisplayName(selectedPlayer.name)}...`
                   ) : isBlockedDoubt ? (
                     'Presença em dúvida'
                   ) : (
@@ -395,11 +377,9 @@ export function PlayerDrawTab({
                   )}
                 </h3>
 
-                <p className="mt-1 sm:mt-1.5 max-w-[42ch] text-xs sm:text-sm text-[var(--ink-sage)] leading-relaxed">
+                <p className="mt-1 sm:mt-1.5 max-w-[42ch] text-xs sm:text-sm text-[#D4E4DA] leading-relaxed font-medium">
                   {isDrawing ? (
-                    match.balanceGk
-                      ? `Separando os times (${match.teams[0]?.outfieldCap ?? 6} na linha e 1 no gol) com equilíbrio.`
-                      : `Separando os times (${match.teams[0]?.outfieldCap ?? 6} por time, tudo junto) com equilíbrio.`
+                    'Girando a urna com os coletes oficiais da pelada...'
                   ) : isBlockedDoubt ? (
                     `Você está marcado como dúvida${selectedPlayer.note ? ` (${selectedPlayer.note})` : ''}. Assim que o organizador confirmar você na lista, o sorteio libera.`
                   ) : (
@@ -447,9 +427,11 @@ export function PlayerDrawTab({
                       setErrorMsg(null);
                       setConfirmingPlayerId(selectedPlayer.id);
                     }}
-                    className="btn-gold tappable w-full sm:w-auto min-w-[240px] h-12 px-6 rounded-xl text-base font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-lg disabled:bg-[#103022] disabled:text-[var(--ink-sage)] disabled:border disabled:border-[var(--chalk-line)] disabled:cursor-not-allowed disabled:shadow-none"
+                    className="btn-gold tappable w-full sm:w-auto min-w-[240px] h-12 px-6 rounded-xl text-base font-black text-[#06160F] inline-flex items-center justify-center gap-2 cursor-pointer shadow-lg disabled:bg-[#103022] disabled:text-[var(--ink-sage)] disabled:border disabled:border-[var(--chalk-line)] disabled:cursor-not-allowed disabled:shadow-none"
                   >
-                    {isDrawing ? 'Sorteando...' : 'Tirar Bolinha da Urna'}
+                    <span className="text-[#06160F] font-black">
+                      {isDrawing ? 'Sorteando...' : 'Tirar Bolinha da Urna'}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -566,72 +548,112 @@ export function PlayerDrawTab({
         </div>
 
         {/* Mobile Bottom Sheet / Centered Modal Confirmation */}
-        {isConfirmingIdentity && (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="confirm-player-title"
-            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
-            onClick={() => setConfirmingPlayerId(null)}
-          >
+        {isConfirmingIdentity && (() => {
+          const cleanName = cleanPlayerDisplayName(selectedPlayer.name);
+          return (
             <div
-              className="bottom-sheet-slide w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border-t sm:border border-[var(--gold-trophy)]/40 bg-gradient-to-b from-[#0B251B] to-[#04120C] p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:p-6 text-center shadow-[0_-12px_40px_rgba(0,0,0,0.7)] sm:shadow-2xl space-y-3.5"
-              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="confirm-player-title"
+              className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+              onClick={() => setConfirmingPlayerId(null)}
             >
-              {/* Mobile handle pull bar */}
-              <div className="w-10 h-1 rounded-full bg-white/20 mx-auto -mt-1 mb-1 sm:hidden" />
+              <div
+                className="bottom-sheet-slide w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl border-t-2 sm:border-2 border-[var(--gold-trophy)]/50 bg-gradient-to-b from-[#0F3023] via-[#092218] to-[#04120C] p-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:p-6 text-center shadow-[0_-16px_48px_rgba(0,0,0,0.85)] sm:shadow-2xl space-y-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Mobile handle pull bar */}
+                <div className="w-12 h-1 rounded-full bg-white/25 mx-auto -mt-1 mb-1 sm:hidden" />
 
-              {/* Icon badge */}
-              <div className="w-12 h-12 rounded-full bg-[var(--gold-trophy)]/15 border border-[var(--gold-trophy)]/40 text-[var(--gold-trophy)] flex items-center justify-center mx-auto shadow-[0_0_18px_rgba(234,179,8,0.25)]">
-                <UserCheck className="w-6 h-6" aria-hidden="true" />
-              </div>
+                {/* Header Icon + Question */}
+                <div className="space-y-2">
+                  <div className="w-13 h-13 rounded-2xl bg-[var(--gold-trophy)]/20 border-2 border-[var(--gold-trophy)]/50 text-[var(--gold-trophy)] flex items-center justify-center mx-auto shadow-[0_0_20px_rgba(234,179,8,0.3)]">
+                    <UserCheck className="w-7 h-7" aria-hidden="true" />
+                  </div>
 
-              {/* Selected player tag */}
-              <div className="inline-flex items-center gap-2 rounded-full bg-[#020B07] border border-[var(--chalk-line)] px-3.5 py-1 text-xs">
-                <span className="font-mono font-bold text-[var(--gold-trophy)]">
-                  #{selectedPlayer.listNumber ?? '•'}
-                </span>
-                <span className="font-bold text-[var(--ink-chalk)]">{selectedPlayer.name}</span>
-                <span className="text-[var(--ink-sage)]">
-                  · {selectedPlayer.role === 'gk' ? 'Goleiro' : 'Linha'}
-                </span>
-              </div>
+                  <h4
+                    id="confirm-player-title"
+                    className="font-display text-2xl sm:text-3xl font-bold uppercase tracking-tight text-white leading-tight"
+                  >
+                    Você é o {cleanName || selectedPlayer.name}?
+                  </h4>
+                  <p className="text-xs sm:text-sm text-[#D4E4DA] leading-relaxed max-w-[34ch] mx-auto font-medium">
+                    Confirme para abrir a urna e descobrir em qual time você vai jogar hoje.
+                  </p>
+                </div>
 
-              <div>
-                <h4
-                  id="confirm-player-title"
-                  className="font-display text-2xl sm:text-3xl font-bold uppercase tracking-tight text-[var(--ink-chalk)]"
-                >
-                  Você é o {selectedPlayer.name}?
-                </h4>
-                <p className="mt-1 text-xs sm:text-sm text-[var(--ink-sage)] leading-relaxed max-w-[34ch] mx-auto">
-                  Confirme para tirar sua bolinha da urna nesta rodada.
-                </p>
-              </div>
+                {/* Clean, high-contrast Player Identity Card */}
+                <div className="rounded-2xl border border-[var(--gold-trophy)]/35 bg-[#051810]/90 p-3.5 sm:p-4 text-left space-y-2.5 shadow-inner">
+                  <div className="flex items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[var(--gold-trophy)] text-[#06160F] font-display text-lg sm:text-xl font-black flex items-center justify-center shrink-0 shadow-md">
+                        #{selectedPlayer.listNumber ?? '•'}
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-[11px] font-bold text-[var(--gold-trophy)] uppercase tracking-wider block">
+                          Atleta confirmado na lista
+                        </span>
+                        <span className="font-bold text-base sm:text-lg text-white truncate block">
+                          {selectedPlayer.name}
+                        </span>
+                      </div>
+                    </div>
 
-              {/* Action Buttons in thumb zone */}
-              <div className="pt-2 flex flex-col gap-2.5 w-full">
-                <button
-                  type="button"
-                  onClick={handleDrawReveal}
-                  className="btn-gold tappable w-full h-12 sm:h-13 rounded-xl text-base font-bold inline-flex items-center justify-center gap-2 shadow-lg cursor-pointer"
-                >
-                  Sim, sou eu · Tirar Bolinha
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setConfirmingPlayerId(null);
-                    onSelectPlayer(null);
-                  }}
-                  className="tappable hover-surface w-full h-11 rounded-xl border border-[var(--chalk-line)] bg-[#071A12]/80 text-xs font-semibold text-[var(--ink-sage)] hover:text-white cursor-pointer"
-                >
-                  Não sou eu (trocar de jogador)
-                </button>
+                    <span
+                      className={`rounded-lg px-2.5 py-1 text-xs font-bold border shrink-0 ${
+                        selectedPlayer.role === 'gk'
+                          ? 'bg-amber-500/25 text-amber-200 border-amber-400/50'
+                          : 'bg-[#071A12] text-[#E2EBE5] border-[var(--chalk-line)]'
+                      }`}
+                    >
+                      {selectedPlayer.role === 'gk' ? '🧤 Goleiro' : '⚽ Linha'}
+                    </span>
+                  </div>
+
+                  {(selectedPlayer.note || selectedPlayer.isGuest || match.meta.feeAmount > 0) && (
+                    <div className="pt-2 border-t border-[var(--chalk-line)] flex items-center justify-between text-xs text-[#E2EBE5]">
+                      <span className="text-[#A7C5B5] truncate">
+                        {selectedPlayer.note
+                          ? `Obs: ${selectedPlayer.note}`
+                          : selectedPlayer.isGuest
+                            ? 'Convidado na lista'
+                            : 'Pelada confirmada'}
+                      </span>
+                      {match.meta.feeAmount > 0 && (
+                        <span className="inline-flex items-center gap-1 font-bold text-emerald-300 shrink-0">
+                          <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+                          R$ {match.meta.feeAmount}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Buttons in thumb zone with clear hierarchy */}
+                <div className="pt-1 flex flex-col gap-2.5 w-full">
+                  <button
+                    type="button"
+                    onClick={handleDrawReveal}
+                    className="btn-gold tappable w-full h-12 sm:h-13 rounded-xl text-base font-black text-[#06160F] inline-flex items-center justify-center gap-2 shadow-xl cursor-pointer"
+                  >
+                    <UserCheck className="w-5 h-5 text-[#06160F] shrink-0" aria-hidden="true" />
+                    <span className="text-[#06160F] font-black">Sim, sou eu · Tirar Bolinha</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmingPlayerId(null);
+                      onSelectPlayer(null);
+                    }}
+                    className="tappable hover-surface w-full h-10 sm:h-11 rounded-xl border border-[var(--chalk-line)] bg-[#071A12]/90 text-xs sm:text-sm font-semibold text-[#B2CCC0] hover:text-white cursor-pointer"
+                  >
+                    Não sou eu (trocar de jogador)
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </section>
     );
   }
