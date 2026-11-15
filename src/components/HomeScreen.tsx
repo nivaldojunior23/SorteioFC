@@ -179,7 +179,7 @@ export function HomeScreen({ onCreated, onOpen, initialError }: HomeScreenProps)
             translate="no"
             className="mt-3.5 font-display text-4xl sm:text-5xl font-extrabold uppercase tracking-tight text-[var(--ink-chalk)]"
           >
-            TiraTime
+            SorteioFC
           </h1>
           <p className="mt-2 max-w-md text-sm leading-relaxed text-[var(--ink-sage)]">
             Crie a sala da sua pelada, monte a lista e mande o link pra galera tirar o time na urna.

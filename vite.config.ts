@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     {
-      name: 'tiratime-api-middleware',
+      name: 'sorteiofc-api-middleware',
       async configureServer(viteServer) {
         // @ts-expect-error -- ESM backend server module
         const { createAppServer } = await import('./server.mjs');

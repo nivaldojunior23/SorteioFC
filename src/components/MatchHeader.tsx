@@ -61,9 +61,11 @@ export function MatchHeader({
                   translate="no"
                   className="font-display text-lg sm:text-2xl font-black uppercase tracking-tight text-[var(--ink-chalk)] leading-none"
                 >
-                  TiraTime
+                  SorteioFC
                 </span>
-                {match.groupName && match.groupName.toLowerCase() !== 'tiratime' && (
+                {match.groupName &&
+                  match.groupName.toLowerCase() !== 'sorteiofc' &&
+                  match.groupName.toLowerCase() !== 'tiratime' && (
                   <span className="rounded-md bg-[#06160F] border border-[var(--gold-trophy)]/35 px-2 py-0.5 text-xs font-bold text-[var(--gold-trophy)] truncate max-w-[170px] sm:max-w-none">
                     {match.groupName}
                   </span>

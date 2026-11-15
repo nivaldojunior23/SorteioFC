@@ -1,5 +1,5 @@
-const SHELL_CACHE = 'tiratime-shell-v1';
-const API_CACHE = 'tiratime-api-v1';
+const SHELL_CACHE = 'sorteiofc-shell-v1';
+const API_CACHE = 'sorteiofc-api-v1';
 const PRECACHE_URLS = ['/', '/site.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {

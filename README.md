@@ -1,6 +1,6 @@
-# ⚽ TiraTime — Urna Ao Vivo & Sorteio de Pelada
+# ⚽ SorteioFC — Urna Ao Vivo & Sorteio de Pelada
 
-O **TiraTime** é um sistema web moderno para substituir o sorteio no papel da sua pelada. O organizador cola a lista do WhatsApp, gera o link da partida e cada jogador acessa pelo celular para **tirar sua bolinha na urna ao vivo**, acompanhando na aba **Times** a formação das equipes em tempo real com prancheta tática.
+O **SorteioFC** é um sistema web moderno para substituir o sorteio no papel da sua pelada. O organizador cola a lista do WhatsApp, gera o link da partida e cada jogador acessa pelo celular para **tirar sua bolinha na urna ao vivo**, acompanhando na aba **Times** a formação das equipes em tempo real com prancheta tática.
 
 ## ✨ Funcionalidades Principais
 

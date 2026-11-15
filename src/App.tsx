@@ -21,7 +21,9 @@ function readUrlContext() {
 
 function readSavedAuth(slug: string | null): AdminAuth | undefined {
   if (!slug || typeof window === 'undefined') return undefined;
-  const saved = window.localStorage.getItem(`tiratime:admin:${slug}`);
+  const saved =
+    window.localStorage.getItem(`sorteiofc:admin:${slug}`) ||
+    window.localStorage.getItem(`tiratime:admin:${slug}`);
   if (!saved) return undefined;
   try {
     const parsed = JSON.parse(saved) as AdminAuth;
@@ -32,7 +34,30 @@ function readSavedAuth(slug: string | null): AdminAuth | undefined {
 }
 
 function saveAuth(slug: string, token: string) {
-  window.localStorage.setItem(`tiratime:admin:${slug}`, JSON.stringify({ token }));
+  window.localStorage.setItem(`sorteiofc:admin:${slug}`, JSON.stringify({ token }));
+}
+
+function removeSavedAuth(slug: string) {
+  window.localStorage.removeItem(`sorteiofc:admin:${slug}`);
+  window.localStorage.removeItem(`tiratime:admin:${slug}`);
+}
+
+function getPlayerStorage(slug: string | null): string | null {
+  if (!slug || typeof window === 'undefined') return null;
+  return (
+    window.localStorage.getItem(`sorteiofc:player:${slug}`) ||
+    window.localStorage.getItem(`tiratime:player:${slug}`)
+  );
+}
+
+function setPlayerStorage(slug: string, playerId: string | null) {
+  if (typeof window === 'undefined') return;
+  if (playerId) {
+    window.localStorage.setItem(`sorteiofc:player:${slug}`, playerId);
+  } else {
+    window.localStorage.removeItem(`sorteiofc:player:${slug}`);
+    window.localStorage.removeItem(`tiratime:player:${slug}`);
+  }
 }
 
 export function App() {
@@ -44,7 +69,7 @@ export function App() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>(initialCtx.adminToken ? 'admin' : 'draw');
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(() =>
-    initialCtx.slug ? window.localStorage.getItem(`tiratime:player:${initialCtx.slug}`) : null
+    getPlayerStorage(initialCtx.slug)
   );
   const [adminAuth, setAdminAuth] = useState<AdminAuth | undefined>(() =>
     initialCtx.adminToken ? { token: initialCtx.adminToken } : readSavedAuth(initialCtx.slug)
@@ -76,7 +101,7 @@ export function App() {
       if (opts.token) saveAuth(nextSlug, opts.token);
       const auth = opts.token ? { token: opts.token } : readSavedAuth(nextSlug);
       setAdminAuth(auth);
-      setSelectedPlayerId(window.localStorage.getItem(`tiratime:player:${nextSlug}`));
+      setSelectedPlayerId(getPlayerStorage(nextSlug));
       setActiveTab(opts.tab ?? (auth ? 'admin' : 'draw'));
       setHomeError(null);
       if (opts.prefetched) {
@@ -103,7 +128,7 @@ export function App() {
       setMatch(null);
       setLoading(Boolean(ctx.slug));
       setAdminAuth(readSavedAuth(ctx.slug));
-      setSelectedPlayerId(ctx.slug ? window.localStorage.getItem(`tiratime:player:${ctx.slug}`) : null);
+      setSelectedPlayerId(getPlayerStorage(ctx.slug));
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -123,7 +148,7 @@ export function App() {
             saveAuth(m.slug, adminAuth.token);
           } else {
             // Token expired (PIN was changed) — drop it and ask for PIN again
-            window.localStorage.removeItem(`tiratime:admin:${m.slug}`);
+            removeSavedAuth(m.slug);
             setAdminAuth(undefined);
           }
           const curUrl = new URL(window.location.href);
@@ -201,8 +226,7 @@ export function App() {
   const handleSelectPlayer = (playerId: string | null) => {
     if (!slug) return;
     setSelectedPlayerId(playerId);
-    if (playerId) window.localStorage.setItem(`tiratime:player:${slug}`, playerId);
-    else window.localStorage.removeItem(`tiratime:player:${slug}`);
+    setPlayerStorage(slug, playerId);
   };
 
   const handleShareLink = async () => {
@@ -214,7 +238,7 @@ export function App() {
 
     if (navigator.share) {
       try {
-        await navigator.share({ title: `${match.groupName} — TiraTime`, text: sharePrompt, url: shareUrl });
+        await navigator.share({ title: `${match.groupName} — SorteioFC`, text: sharePrompt, url: shareUrl });
         return;
       } catch {
         // fallback to clipboard
@@ -252,12 +276,12 @@ export function App() {
 
   if (loading || !match) {
     return (
-      <main className="min-h-[100dvh] flex flex-col items-center justify-center px-4 text-center">
+      <main className="min-h-dvh flex flex-col items-center justify-center px-4 text-center">
         <div className="relative flex items-center justify-center">
           <div className="absolute -inset-3 rounded-full bg-[var(--gold-trophy)]/12 blur-md" aria-hidden="true" />
           <div className="relative w-12 h-12 rounded-full border-2 border-[var(--gold-trophy)] border-t-transparent animate-spin" />
         </div>
-        <p className="mt-4 text-sm font-medium text-[var(--ink-sage)]">Carregando vestiário do TiraTime…</p>
+        <p className="mt-4 text-sm font-medium text-[var(--ink-sage)]">Carregando vestiário do SorteioFC…</p>
       </main>
     );
   }
@@ -265,7 +289,7 @@ export function App() {
   const isEmptyRoster = match.players.length === 0;
 
   return (
-    <div className="min-h-[100dvh] flex flex-col pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+    <div className="min-h-dvh flex flex-col pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
       <MatchHeader
         match={match}
         activeTab={activeTab}

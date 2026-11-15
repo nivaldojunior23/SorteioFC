@@ -522,7 +522,7 @@ export function PlayerDrawTab({
                   <button
                     type="button"
                     onClick={() => {
-                      const shareText = `⚽ Tirei minha bolinha no TiraTime e caí no *${assignedTeam.name}*! Bora pro jogo!`;
+                      const shareText = `⚽ Tirei minha bolinha no SorteioFC e caí no *${assignedTeam.name}*! Bora pro jogo!`;
                       navigator.clipboard.writeText(shareText).catch(() => {});
                       setCopiedTeam(true);
                       setTimeout(() => setCopiedTeam(false), 2000);

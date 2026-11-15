@@ -1,13 +1,13 @@
 import type { Player, TeamConfig } from '../types';
 
-export function TiraTimeCrest({ className = 'w-11 h-11' }: { className?: string }) {
+export function SorteioFCCrest({ className = 'w-11 h-11' }: { className?: string }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 256 256"
       className={className}
       role="img"
-      aria-label="Logo TiraTime"
+      aria-label="Logo SorteioFC"
     >
       {/* Top-left spinning urn arc (Trophy Gold) */}
       <path
@@ -327,3 +327,5 @@ export function MiniPitchSvg({
     </svg>
   );
 }
+
+export { SorteioFCCrest as TiraTimeCrest };

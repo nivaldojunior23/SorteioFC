@@ -25,7 +25,9 @@ import { ConfirmAlertDialog } from './ConfirmAlertDialog';
 /** Builds a ready-to-paste WhatsApp group list matching the room's current formation and metadata. */
 function buildGroupListTemplate(match: MatchState, outfieldCap: number): string {
   const cleanTitle =
-    match.groupName && match.groupName.trim().toLowerCase() !== 'tiratime'
+    match.groupName &&
+    match.groupName.trim().toLowerCase() !== 'sorteiofc' &&
+    match.groupName.trim().toLowerCase() !== 'tiratime'
       ? match.groupName.trim().toUpperCase()
       : 'DA PELADA';
   const dateLabel = match.meta.dateLabel?.trim() || 'Quinta-feira';

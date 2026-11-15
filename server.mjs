@@ -226,7 +226,7 @@ export function createAppServer({ dbPath, postgresUrl, store: customStore } = {}
       }
 
       if (pathname === '/api/health' && method === 'GET') {
-        return sendJson(res, 200, { ok: true, service: 'tiratime', storage: storageMode });
+        return sendJson(res, 200, { ok: true, service: 'sorteiofc', storage: storageMode });
       }
 
       if (pathname === '/api/network-info' && method === 'GET') {
@@ -476,7 +476,7 @@ if (isMain) {
 
   server.listen(targetPort, HOST, () => {
     const activePort = server.address()?.port || targetPort;
-    console.log(`\nTiraTime rodando em: http://localhost:${activePort}`);
+    console.log(`\nSorteioFC rodando em: http://localhost:${activePort}`);
     console.log('Cada organizador cria a própria pelada (nome + PIN) direto na tela inicial.');
     if (!isDev) {
       console.log(`Para acessar pelo celular no mesmo Wi-Fi, use o IP da sua máquina na porta ${activePort}.\n`);

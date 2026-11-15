@@ -211,7 +211,7 @@ test('Vercel serverless handler (api/index.mjs) and VERCEL=1 mode work cleanly',
   const { resolveDefaultDbPath } = await import('../lib/db.mjs');
   const { default: vercelHandler } = await import('../api/index.mjs');
 
-  assert.equal(resolveDefaultDbPath(), path.join(os.tmpdir(), 'tiratime.db'));
+  assert.equal(resolveDefaultDbPath(), path.join(os.tmpdir(), 'sorteiofc.db'));
 
   const srv = http.createServer((req, res) => vercelHandler(req, res));
   await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));

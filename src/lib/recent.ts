@@ -9,13 +9,16 @@ export interface RecentMatch {
   lastVisit: string;
 }
 
-const KEY = 'tiratime:recent';
+const KEY = 'sorteiofc:recent';
+const LEGACY_KEY = 'tiratime:recent';
 const MAX_ITEMS = 20;
 
 export function getRecentMatches(): RecentMatch[] {
   if (typeof window === 'undefined') return [];
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(KEY) || '[]');
+    const raw =
+      window.localStorage.getItem(KEY) || window.localStorage.getItem(LEGACY_KEY) || '[]';
+    const parsed = JSON.parse(raw);
     return Array.isArray(parsed)
       ? parsed.filter((m) => m && typeof m.slug === 'string' && m.slug)
       : [];
@@ -40,8 +43,11 @@ export function rememberMatch(entry: { slug: string; groupName: string; isOrgani
 export function forgetMatch(slug: string) {
   const updated = getRecentMatches().filter((m) => m.slug !== slug);
   window.localStorage.setItem(KEY, JSON.stringify(updated));
+  window.localStorage.removeItem(`sorteiofc:admin:${slug}`);
   window.localStorage.removeItem(`tiratime:admin:${slug}`);
+  window.localStorage.removeItem(`sorteiofc:player:${slug}`);
   window.localStorage.removeItem(`tiratime:player:${slug}`);
+  window.localStorage.removeItem(`sorteiofc:device-lock:${slug}`);
   window.localStorage.removeItem(`tiratime:device-lock:${slug}`);
 }
 
@@ -52,7 +58,9 @@ export interface DeviceDrawLock {
 
 export function getDeviceDrawLock(slug: string): DeviceDrawLock | null {
   try {
-    const raw = window.localStorage.getItem(`tiratime:device-lock:${slug}`);
+    const raw =
+      window.localStorage.getItem(`sorteiofc:device-lock:${slug}`) ||
+      window.localStorage.getItem(`tiratime:device-lock:${slug}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.playerId === 'string') {
@@ -70,7 +78,7 @@ export function getDeviceDrawLock(slug: string): DeviceDrawLock | null {
 export function saveDeviceDrawLock(slug: string, playerId: string, playerName: string) {
   try {
     window.localStorage.setItem(
-      `tiratime:device-lock:${slug}`,
+      `sorteiofc:device-lock:${slug}`,
       JSON.stringify({ playerId, playerName })
     );
   } catch {

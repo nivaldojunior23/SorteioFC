@@ -1,9 +1,9 @@
 {
-  "name": "tira-time",
+  "name": "sorteio-fc",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "TiraTime — Sistema de sorteio de times na urna ao vivo e gestão de pelada via lista do WhatsApp",
+  "description": "SorteioFC — Sistema de sorteio de times na urna ao vivo e gestão de pelada via lista do WhatsApp",
   "engines": {
     "node": ">=22.x"
   },
